@@ -1,0 +1,18 @@
+# Reference only -- the Remote Installer generates the real unit file at
+# install time. This documents the path convention both sides agree on:
+# the compiled `bun build --compile` binary lives at /opt/labmon-agent/agent,
+# and its config at /etc/labmon-agent/config.json (see src/config.ts).
+
+[Unit]
+Description=LabMon monitoring agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/opt/labmon-agent/agent
+Restart=always
+RestartSec=5
+User=labmon
+
+[Install]
+WantedBy=multi-user.target

@@ -19,6 +19,10 @@ data/*.db-shm
 # agent build output
 packages/agent/dist-bin/
 
+# bun's own lockfile at root is a byproduct of building packages/agent;
+# npm's package-lock.json is the monorepo's source of truth
+/bun.lock
+
 # editors / os
 .DS_Store
 .vscode/

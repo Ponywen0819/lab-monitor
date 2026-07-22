@@ -1,0 +1,16 @@
+{
+  "name": "@labmon/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build --compile ./src/index.ts --outfile ./dist-bin/agent",
+    "start": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@labmon/shared": "*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
