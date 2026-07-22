@@ -1,0 +1,25 @@
+node_modules/
+dist/
+build/
+*.log
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# collector runtime data
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+*.pem
+*.key
+
+# agent build output
+packages/agent/dist-bin/
+
+# editors / os
+.DS_Store
+.vscode/
+.idea/

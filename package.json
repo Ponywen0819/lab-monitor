@@ -1,0 +1,14 @@
+{
+  "name": "lab-monitor",
+  "private": true,
+  "version": "0.1.0",
+  "description": "實驗室電腦監控系統 - monorepo root",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=packages/shared && npm run build --workspace=packages/collector && npm run build --workspace=packages/frontend",
+    "dev:collector": "npm run dev --workspace=packages/collector",
+    "dev:frontend": "npm run dev --workspace=packages/frontend"
+  }
+}
