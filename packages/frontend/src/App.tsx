@@ -1,6 +1,8 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import { Dashboard } from "./pages/Dashboard";
 import { HostDetail } from "./pages/HostDetail";
+import { RemoteInstall } from "./pages/RemoteInstall";
+import { Settings } from "./pages/Settings";
 
 export default function App() {
   return (
@@ -11,11 +13,8 @@ export default function App() {
           <NavLink to="/" end>
             Dashboard
           </NavLink>
-          {/*
-            Sibling task: add two more entries here, e.g.
-            <NavLink to="/install">Remote Install</NavLink>
-            <NavLink to="/settings">Settings</NavLink>
-          */}
+          <NavLink to="/install">Remote Install</NavLink>
+          <NavLink to="/settings">Settings</NavLink>
         </nav>
       </header>
 
@@ -23,11 +22,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/hosts/:id" element={<HostDetail />} />
-          {/*
-            Sibling task: add two more routes here, e.g.
-            <Route path="/install" element={<RemoteInstall />} />
-            <Route path="/settings" element={<Settings />} />
-          */}
+          <Route path="/install" element={<RemoteInstall />} />
+          <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
     </div>

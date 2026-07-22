@@ -11,6 +11,7 @@ import type {
   CollectorToFrontendMessage,
   DashboardSubscribeMessage,
   HostSnapshot,
+  InstallProgressEvent,
 } from "@labmon/shared";
 import { fetchHosts } from "../api/client";
 
@@ -20,6 +21,9 @@ const RECONNECT_DELAY_MS = 3000;
 interface WsContextValue {
   hosts: Map<string, HostSnapshot>;
   connected: boolean;
+  // Keyed by installId so the Remote Install page can subscribe to just the
+  // install it kicked off; events accumulate in arrival order per install.
+  installEvents: Map<string, InstallProgressEvent[]>;
 }
 
 const WsContext = createContext<WsContextValue | null>(null);
@@ -27,6 +31,7 @@ const WsContext = createContext<WsContextValue | null>(null);
 export function WsProvider({ children }: { children: ReactNode }) {
   const [hosts, setHosts] = useState<Map<string, HostSnapshot>>(new Map());
   const [connected, setConnected] = useState(false);
+  const [installEvents, setInstallEvents] = useState<Map<string, InstallProgressEvent[]>>(new Map());
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
@@ -112,10 +117,21 @@ export function WsProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // install_progress belongs to the remote-install page (sibling task); nothing to do here.
+    if (message.type === "install_progress") {
+      const { installId } = message.event;
+      setInstallEvents((prev) => {
+        const next = new Map(prev);
+        next.set(installId, [...(next.get(installId) ?? []), message.event]);
+        return next;
+      });
+      return;
+    }
   }
 
-  const value = useMemo<WsContextValue>(() => ({ hosts, connected }), [hosts, connected]);
+  const value = useMemo<WsContextValue>(
+    () => ({ hosts, connected, installEvents }),
+    [hosts, connected, installEvents],
+  );
 
   return <WsContext.Provider value={value}>{children}</WsContext.Provider>;
 }
