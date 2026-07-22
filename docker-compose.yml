@@ -1,0 +1,29 @@
+services:
+  collector:
+    build:
+      context: .
+      dockerfile: packages/collector/Dockerfile
+    ports:
+      - "8080:8080" # WebSocket (agents + frontend)
+      - "8081:8081" # HTTP API
+    volumes:
+      # SQLite DB + the collector's own persistent SSH keypair both live
+      # under here (see DB_PATH / COLLECTOR_SSH_KEY_PATH defaults) -- one
+      # bind mount covers both, no separate volume needed.
+      - ./data:/app/data
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: packages/frontend/Dockerfile
+      args:
+        VITE_HTTP_BASE_URL: ${VITE_HTTP_BASE_URL:-http://localhost:8081}
+        VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8080}
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+    depends_on:
+      - collector
