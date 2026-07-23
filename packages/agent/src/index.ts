@@ -17,6 +17,16 @@ try {
 
 console.log(`[agent] starting, hostId=${config.hostId}, collector=${config.collectorWsUrl}`);
 
+// ponytail: Bun ships a global WebSocket; Node doesn't provide one by default
+// until v22. Plugging in the `ws` package here (instead of importing it
+// directly in ws-client.ts) keeps ws-client.ts running on whichever
+// WebSocket the runtime gives it -- Bun's own in production, `ws` under
+// tsx/Node in dev -- with no per-runtime branching in that file.
+if (typeof globalThis.WebSocket === "undefined") {
+  const { WebSocket } = await import("ws");
+  globalThis.WebSocket = WebSocket as unknown as typeof globalThis.WebSocket;
+}
+
 const wsClient = new WsClient(config.collectorWsUrl);
 wsClient.start();
 

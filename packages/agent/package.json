@@ -10,10 +10,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@labmon/shared": "*"
+    "@labmon/shared": "*",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.23.1",
     "vitest": "^2.1.9"
   }
