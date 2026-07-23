@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "build": "bun build --compile ./src/index.ts --outfile ./dist-bin/agent",
-    "start": "bun run src/index.ts"
+    "start": "bun run src/index.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@labmon/shared": "*"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "vitest": "^2.1.9"
   }
 }

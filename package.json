@@ -9,6 +9,10 @@
   "scripts": {
     "build": "npm run build --workspace=packages/shared && npm run build --workspace=packages/collector && npm run build --workspace=packages/frontend",
     "dev:collector": "npm run dev --workspace=packages/collector",
-    "dev:frontend": "npm run dev --workspace=packages/frontend"
+    "dev:frontend": "npm run dev --workspace=packages/frontend",
+    "test": "npm run build --workspace=packages/shared && npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.9"
   }
 }
