@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   CartesianGrid,
   Legend,
@@ -10,8 +10,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { DiskPartition, MetricSnapshot } from "@labmon/shared";
-import { fetchHostMetrics } from "../api/client";
+import type { DiskPartition, HostSnapshot, MetricSnapshot } from "@labmon/shared";
+import { deleteHost, fetchHostMetrics } from "../api/client";
 import { useHosts } from "../ws/WsProvider";
 
 interface ChartPoint {
@@ -124,6 +124,39 @@ function TimeSeriesChart({
   );
 }
 
+function RemoveHostButton({ host }: { host: HostSnapshot }) {
+  const navigate = useNavigate();
+  const [error, setError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const isOnline = host.status === "online";
+
+  function handleClick(): void {
+    if (!window.confirm(`Remove "${host.name}"? This also deletes its recorded metric history.`)) return;
+    setError(null);
+    setRemoving(true);
+    deleteHost(host.id)
+      .then(() => navigate("/"))
+      .catch((err) => {
+        setError(String(err));
+        setRemoving(false);
+      });
+  }
+
+  return (
+    <div className="remove-host">
+      <button
+        className="danger-button"
+        disabled={isOnline || removing}
+        title={isOnline ? "Host is online -- wait for it to go offline before removing" : undefined}
+        onClick={handleClick}
+      >
+        {removing ? "Removing…" : "Remove host"}
+      </button>
+      {error && <p className="error-text">Failed to remove host: {error}</p>}
+    </div>
+  );
+}
+
 export function HostDetail() {
   const { id } = useParams<{ id: string }>();
   const { hosts } = useHosts();
@@ -158,7 +191,10 @@ export function HostDetail() {
       <p>
         <Link to="/">&larr; back to dashboard</Link>
       </p>
-      <h2>{host?.name ?? id}</h2>
+      <div className="page-header">
+        <h2>{host?.name ?? id}</h2>
+        {host && <RemoveHostButton host={host} />}
+      </div>
 
       {!host && <p className="empty-state">Loading host…</p>}
 

@@ -38,6 +38,7 @@ describe("createHttpServer", () => {
   let stateMachine: OfflineStateMachine;
   let installAgentMock: ReturnType<typeof vi.fn>;
   let remoteInstaller: RemoteInstaller;
+  let onHostRemovedMock: ReturnType<typeof vi.fn>;
   let port: number;
   let server: HttpServer;
   let base: string;
@@ -48,10 +49,11 @@ describe("createHttpServer", () => {
     stateMachine = createOfflineStateMachine();
     installAgentMock = vi.fn((_request: InstallRequest) => "install-id");
     remoteInstaller = { installAgent: installAgentMock } as unknown as RemoteInstaller;
+    onHostRemovedMock = vi.fn();
 
     port = await getFreePort();
     base = `http://localhost:${port}`;
-    server = createHttpServer({ port, storage, stateMachine, remoteInstaller });
+    server = createHttpServer({ port, storage, stateMachine, remoteInstaller, onHostRemoved: onHostRemovedMock });
     server.start();
   });
 
@@ -128,6 +130,51 @@ describe("createHttpServer", () => {
     it("returns 400 for a non-numeric sinceMs", async () => {
       const res = await fetch(`${base}/api/hosts/h1/metrics?sinceMs=notanumber`);
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe("DELETE /api/hosts/:id", () => {
+    it("returns 404 for an unknown host", async () => {
+      const res = await fetch(`${base}/api/hosts/nope`, { method: "DELETE" });
+      expect(res.status).toBe(404);
+      expect(onHostRemovedMock).not.toHaveBeenCalled();
+    });
+
+    it("returns 409 and does not delete when the host is online", async () => {
+      storage.upsertHost({ id: "h1", name: "Host One", type: "agent" });
+      stateMachine.signalUp("h1");
+
+      const res = await fetch(`${base}/api/hosts/h1`, { method: "DELETE" });
+
+      expect(res.status).toBe(409);
+      expect(storage.getHost("h1")).toBeDefined();
+      expect(onHostRemovedMock).not.toHaveBeenCalled();
+    });
+
+    it("deletes a non-online host, its metrics/status history, and notifies onHostRemoved", async () => {
+      storage.upsertHost({ id: "h1", name: "Host One", type: "agent" });
+      storage.insertMetricSnapshot({ hostId: "h1", timestamp: 1000, metrics: sampleMetrics });
+      storage.insertStatusEvent({ hostId: "h1", status: "offline", timestamp: 1000 });
+      stateMachine.signalUp("h1");
+      stateMachine.signalDown("h1"); // -> "disconnected", still not "online"
+
+      const res = await fetch(`${base}/api/hosts/h1`, { method: "DELETE" });
+
+      expect(res.status).toBe(200);
+      expect(storage.getHost("h1")).toBeUndefined();
+      expect(storage.getRecentMetrics("h1", 0)).toEqual([]);
+      expect(stateMachine.getHostState("h1")).toBeUndefined();
+      expect(onHostRemovedMock).toHaveBeenCalledWith("h1");
+    });
+
+    it("allows re-registering the same hostId as brand-new after deletion", async () => {
+      storage.upsertHost({ id: "h1", name: "Host One", type: "agent" });
+      stateMachine.signalUp("h1");
+      stateMachine.signalDown("h1");
+      await fetch(`${base}/api/hosts/h1`, { method: "DELETE" });
+
+      stateMachine.signalUp("h1");
+      expect(stateMachine.getHostState("h1")?.status).toBe("online");
     });
   });
 

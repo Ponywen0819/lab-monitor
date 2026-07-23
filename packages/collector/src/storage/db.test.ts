@@ -137,6 +137,36 @@ describe("Storage", () => {
     });
   });
 
+  describe("deleteHost", () => {
+    it("removes the host row along with its metric snapshots and status events", () => {
+      storage.upsertHost(host);
+      storage.insertMetricSnapshot(snapshot({ timestamp: 100 }));
+      storage.insertStatusEvent({ hostId: host.id, status: "offline", timestamp: 100 });
+
+      storage.deleteHost(host.id);
+
+      expect(storage.getHost(host.id)).toBeUndefined();
+      expect(storage.getRecentMetrics(host.id, 0)).toEqual([]);
+    });
+
+    it("does not affect other hosts' rows", () => {
+      storage.upsertHost(host);
+      storage.upsertHost({ id: "host-2", name: "Beta", type: "nas" });
+      storage.insertMetricSnapshot(snapshot({ timestamp: 100 }));
+      storage.insertMetricSnapshot({ ...snapshot({ timestamp: 100 }), hostId: "host-2" });
+
+      storage.deleteHost(host.id);
+
+      expect(storage.getHost("host-2")).toBeDefined();
+      expect(storage.getRecentMetrics("host-2", 0)).toHaveLength(1);
+    });
+
+    it("does not throw when deleting a host with no metrics/status rows", () => {
+      storage.upsertHost(host);
+      expect(() => storage.deleteHost(host.id)).not.toThrow();
+    });
+  });
+
   describe("deleteMetricsOlderThan", () => {
     beforeEach(() => {
       storage.upsertHost(host);

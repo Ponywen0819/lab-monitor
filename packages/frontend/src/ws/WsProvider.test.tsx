@@ -211,6 +211,44 @@ describe("WsProvider", () => {
     expect(readHosts().has("unknown")).toBe(false);
   });
 
+  it("host_removed drops the host from the map", async () => {
+    mockedFetchHosts.mockResolvedValue([makeHost({ id: "a" }), makeHost({ id: "b", name: "Beta" })]);
+    render(
+      <WsProvider>
+        <Consumer />
+      </WsProvider>,
+    );
+    await waitFor(() => expect(readHosts().size).toBe(2));
+    const ws = FakeWebSocket.instances[0];
+
+    act(() => {
+      ws.onmessage?.({ data: JSON.stringify({ type: "host_removed", hostId: "a" }) });
+    });
+
+    await waitFor(() => {
+      const hosts = readHosts();
+      expect(hosts.has("a")).toBe(false);
+      expect(hosts.has("b")).toBe(true);
+    });
+  });
+
+  it("host_removed for an unknown host id is a no-op", async () => {
+    mockedFetchHosts.mockResolvedValue([makeHost({ id: "a" })]);
+    render(
+      <WsProvider>
+        <Consumer />
+      </WsProvider>,
+    );
+    await waitFor(() => expect(readHosts().size).toBe(1));
+    const ws = FakeWebSocket.instances[0];
+
+    act(() => {
+      ws.onmessage?.({ data: JSON.stringify({ type: "host_removed", hostId: "unknown" }) });
+    });
+
+    expect(readHosts().size).toBe(1);
+  });
+
   it("install_progress appends events per installId; a second event for the same id grows the array", async () => {
     mockedFetchHosts.mockResolvedValue([]);
     render(

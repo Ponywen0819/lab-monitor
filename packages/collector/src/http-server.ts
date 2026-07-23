@@ -12,6 +12,7 @@ export interface HttpServerOptions {
   storage: Storage;
   stateMachine: OfflineStateMachine;
   remoteInstaller: RemoteInstaller;
+  onHostRemoved: (hostId: string) => void;
 }
 
 export interface HttpServer {
@@ -73,12 +74,12 @@ function parseInstallRequest(body: unknown): InstallRequest | null {
  * wide-open CORS so the frontend can be served from a different origin in dev.
  */
 export function createHttpServer(options: HttpServerOptions): HttpServer {
-  const { port, storage, stateMachine, remoteInstaller } = options;
+  const { port, storage, stateMachine, remoteInstaller, onHostRemoved } = options;
   let server: Server | null = null;
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, PUT, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
     if (req.method === "OPTIONS") {
@@ -113,6 +114,27 @@ export function createHttpServer(options: HttpServerOptions): HttpServer {
         }
         const sinceTimestamp = Date.now() - lookbackMs;
         sendJson(res, 200, storage.getRecentMetrics(hostId, sinceTimestamp));
+        return;
+      }
+
+      if (segments.length === 3 && segments[0] === "api" && segments[1] === "hosts" && method === "DELETE") {
+        const hostId = decodeURIComponent(segments[2]);
+        const snapshot = getHostSnapshot(hostId, storage, stateMachine);
+        if (!snapshot) {
+          sendJson(res, 404, { error: "host not found" });
+          return;
+        }
+        // "online" is the one status that must not be deletable out from under
+        // a host still actively reporting -- everything else (disconnected,
+        // offline, notified) is fair game.
+        if (snapshot.status === "online") {
+          sendJson(res, 409, { error: "cannot delete a host that is currently online" });
+          return;
+        }
+        storage.deleteHost(hostId);
+        stateMachine.removeHost(hostId);
+        onHostRemoved(hostId);
+        sendJson(res, 200, { id: hostId });
         return;
       }
 

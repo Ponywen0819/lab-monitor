@@ -35,12 +35,19 @@ export interface InstallProgressMessage {
   event: InstallProgressEvent;
 }
 
+/** Collector -> Frontend: a host was deleted and should be dropped from the UI. */
+export interface HostRemovedMessage {
+  type: "host_removed";
+  hostId: string;
+}
+
 export type AgentToCollectorMessage = AgentReportMessage;
 export type FrontendToCollectorMessage = DashboardSubscribeMessage;
 export type CollectorToFrontendMessage =
   | HostUpdateMessage
   | HostStatusMessage
-  | InstallProgressMessage;
+  | InstallProgressMessage
+  | HostRemovedMessage;
 
 export type WsMessage =
   | AgentToCollectorMessage

@@ -126,6 +126,16 @@ export function WsProvider({ children }: { children: ReactNode }) {
       });
       return;
     }
+
+    if (message.type === "host_removed") {
+      setHosts((prev) => {
+        if (!prev.has(message.hostId)) return prev;
+        const next = new Map(prev);
+        next.delete(message.hostId);
+        return next;
+      });
+      return;
+    }
   }
 
   const value = useMemo<WsContextValue>(

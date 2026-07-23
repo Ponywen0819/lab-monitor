@@ -137,4 +137,38 @@ describe("OfflineStateMachine", () => {
     expect(machine.getHostState("host-b")?.status).toBe("disconnected");
     expect(machine.getHostState("host-a")?.status).toBe("offline");
   });
+
+  describe("removeHost", () => {
+    it("clears state so getHostState returns undefined", () => {
+      machine.signalUp("host-1");
+      machine.removeHost("host-1");
+
+      expect(machine.getHostState("host-1")).toBeUndefined();
+    });
+
+    it("cancels a pending escalation timer so it never fires after removal", () => {
+      machine.signalUp("host-1");
+      machine.signalDown("host-1");
+      machine.removeHost("host-1");
+
+      vi.advanceTimersByTime(OFFLINE_TO_NOTIFIED_MS + DISCONNECTED_GRACE_MS);
+
+      expect(machine.getHostState("host-1")).toBeUndefined();
+    });
+
+    it("does not throw for an unknown hostId", () => {
+      expect(() => machine.removeHost("nope")).not.toThrow();
+    });
+
+    it("treats a later signalUp for the same hostId as brand-new", () => {
+      machine.signalUp("host-1");
+      machine.removeHost("host-1");
+      events.length = 0;
+
+      machine.signalUp("host-1");
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ status: "online", previousStatus: null, wasNotified: false });
+    });
+  });
 });

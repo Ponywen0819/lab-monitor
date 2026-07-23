@@ -59,6 +59,18 @@ export class Storage {
     return this.db.prepare(`SELECT id, name, type FROM host`).all() as Host[];
   }
 
+  // No ON DELETE CASCADE on the schema's REFERENCES host(id), so metric_snapshot
+  // and status_event rows are cleared explicitly; wrapped in a transaction so a
+  // crash mid-delete can't leave orphaned metric/status rows behind.
+  deleteHost(id: string): void {
+    const runDelete = this.db.transaction((hostId: string) => {
+      this.db.prepare(`DELETE FROM metric_snapshot WHERE host_id = ?`).run(hostId);
+      this.db.prepare(`DELETE FROM status_event WHERE host_id = ?`).run(hostId);
+      this.db.prepare(`DELETE FROM host WHERE id = ?`).run(hostId);
+    });
+    runDelete(id);
+  }
+
   insertMetricSnapshot(snapshot: MetricSnapshot): void {
     const m: HostMetrics = snapshot.metrics;
     this.db

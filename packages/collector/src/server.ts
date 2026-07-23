@@ -99,6 +99,7 @@ export function createCollectorServer(options: CollectorServerOptions): Collecto
     storage,
     stateMachine,
     remoteInstaller,
+    onHostRemoved: (hostId) => wsServer.broadcastToFrontends({ type: "host_removed", hostId }),
   });
 
   wsServer.start();
