@@ -240,7 +240,13 @@ describe("createHttpServer", () => {
   describe("POST /api/install", () => {
     it("calls remoteInstaller.installAgent and returns 202 with its installId", async () => {
       installAgentMock.mockReturnValue("install-abc");
-      const request = { targetIp: "10.0.0.5", sshPort: 22, username: "root", password: "hunter2" };
+      const request = {
+        targetIp: "10.0.0.5",
+        sshPort: 22,
+        username: "root",
+        password: "hunter2",
+        sudoPassword: "sudosecret",
+      };
 
       const res = await fetch(`${base}/api/install`, {
         method: "POST",
@@ -254,11 +260,12 @@ describe("createHttpServer", () => {
     });
 
     const invalidBodies: Record<string, unknown> = {
-      "missing targetIp": { sshPort: 22, username: "root", password: "p" },
-      "non-integer sshPort": { targetIp: "10.0.0.5", sshPort: 22.5, username: "root", password: "p" },
-      "negative sshPort": { targetIp: "10.0.0.5", sshPort: -1, username: "root", password: "p" },
-      "missing username": { targetIp: "10.0.0.5", sshPort: 22, password: "p" },
-      "missing password": { targetIp: "10.0.0.5", sshPort: 22, username: "root" },
+      "missing targetIp": { sshPort: 22, username: "root", password: "p", sudoPassword: "p" },
+      "non-integer sshPort": { targetIp: "10.0.0.5", sshPort: 22.5, username: "root", password: "p", sudoPassword: "p" },
+      "negative sshPort": { targetIp: "10.0.0.5", sshPort: -1, username: "root", password: "p", sudoPassword: "p" },
+      "missing username": { targetIp: "10.0.0.5", sshPort: 22, password: "p", sudoPassword: "p" },
+      "missing password": { targetIp: "10.0.0.5", sshPort: 22, username: "root", sudoPassword: "p" },
+      "missing sudoPassword": { targetIp: "10.0.0.5", sshPort: 22, username: "root", password: "p" },
     };
 
     for (const [label, body] of Object.entries(invalidBodies)) {

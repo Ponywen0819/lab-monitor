@@ -10,9 +10,11 @@
  *   COLLECTOR_SSH_KEY_PATH  Where the collector's own persistent Ed25519
  *                           identity keypair lives. Generated lazily on first
  *                           use if missing. Default "./data/ssh/collector_id_ed25519".
- *   AGENT_BINARY_PATH       Local path to the built Agent binary to upload.
- *                           Default "../agent/dist-bin/agent" relative to this
- *                           package (packages/agent/dist-bin/agent).
+ *   AGENT_BINARY_DIR        Local directory holding one built Agent binary per
+ *                           architecture (agent-linux-x64, agent-linux-arm64);
+ *                           the target's `uname -m` picks which one is
+ *                           uploaded. Default "../agent/dist-bin" relative to
+ *                           this package (packages/agent/dist-bin).
  *   COLLECTOR_WS_URL        The URL the freshly installed agent should dial
  *                           back to, written into its config.json, e.g.
  *                           "ws://<this-host>:8080".
@@ -30,7 +32,7 @@ const moduleDir = dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_SSH_KEY_PATH = "./data/ssh/collector_id_ed25519";
 // remote-installer/ -> src|dist -> collector -> packages, then into agent/.
-const DEFAULT_AGENT_BINARY_PATH = resolve(moduleDir, "../../../agent/dist-bin/agent");
+const DEFAULT_AGENT_BINARY_DIR = resolve(moduleDir, "../../../agent/dist-bin");
 const DEFAULT_COLLECTOR_WS_URL = "ws://localhost:8080";
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_WAIT_FOR_CONNECTION_TIMEOUT_MS = 30_000;
@@ -39,7 +41,7 @@ export interface RemoteInstallerOptions {
   storage: Storage;
   stateMachine: OfflineStateMachine;
   sshKeyPath?: string;
-  agentBinaryPath?: string;
+  agentBinaryDir?: string;
   collectorWsUrl?: string;
   connectTimeoutMs?: number;
   waitForConnectionTimeoutMs?: number;
@@ -60,7 +62,7 @@ export class RemoteInstaller extends EventEmitter {
   private readonly storage: Storage;
   private readonly stateMachine: OfflineStateMachine;
   private readonly sshKeyPath: string;
-  private readonly agentBinaryPath: string;
+  private readonly agentBinaryDir: string;
   private readonly collectorWsUrl: string;
   private readonly connectTimeoutMs: number;
   private readonly waitForConnectionTimeoutMs: number;
@@ -70,7 +72,7 @@ export class RemoteInstaller extends EventEmitter {
     this.storage = options.storage;
     this.stateMachine = options.stateMachine;
     this.sshKeyPath = options.sshKeyPath ?? process.env.COLLECTOR_SSH_KEY_PATH ?? DEFAULT_SSH_KEY_PATH;
-    this.agentBinaryPath = options.agentBinaryPath ?? process.env.AGENT_BINARY_PATH ?? DEFAULT_AGENT_BINARY_PATH;
+    this.agentBinaryDir = options.agentBinaryDir ?? process.env.AGENT_BINARY_DIR ?? DEFAULT_AGENT_BINARY_DIR;
     this.collectorWsUrl = options.collectorWsUrl ?? process.env.COLLECTOR_WS_URL ?? DEFAULT_COLLECTOR_WS_URL;
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
     this.waitForConnectionTimeoutMs = options.waitForConnectionTimeoutMs ?? DEFAULT_WAIT_FOR_CONNECTION_TIMEOUT_MS;
@@ -89,7 +91,7 @@ export class RemoteInstaller extends EventEmitter {
       storage: this.storage,
       stateMachine: this.stateMachine,
       sshKeyPath: this.sshKeyPath,
-      agentBinaryPath: this.agentBinaryPath,
+      agentBinaryDir: this.agentBinaryDir,
       collectorWsUrl: this.collectorWsUrl,
       connectTimeoutMs: this.connectTimeoutMs,
       waitForConnectionTimeoutMs: this.waitForConnectionTimeoutMs,

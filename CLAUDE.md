@@ -17,7 +17,7 @@ npm run dev --workspace=packages/frontend     # Vite dev server：http://localho
 
 npm run dev --workspace=packages/agent        # tsx 跑原始碼，預設吃 packages/agent/dev-config.json，不用每次改動都重新編譯執行檔
 
-npm run build --workspace=packages/agent      # 編成 packages/agent/dist-bin/agent（Bun 單一執行檔，這步驟真的需要 Bun，npm 生態沒有現成等價指令）
+npm run build --workspace=packages/agent      # 編成 packages/agent/dist-bin/agent-linux-{x64,arm64}（Bun 交叉編譯兩種架構，這步驟真的需要 Bun，npm 生態沒有現成等價指令）
 npm run build                                 # shared -> collector -> frontend，依序（agent 不含在內，另外用 Bun 編譯）
 
 npm test                                              # 先 build shared，再跑所有 workspace 的測試
@@ -39,7 +39,7 @@ npx vitest run path/to/some.test.ts --workspace=packages/collector   # 只跑單
 
 **`ws-server.ts` 是純傳輸層**——只負責解析/驗證訊息、追蹤連線，完全不知道狀態機或儲存層的存在。真正把這些串起來的是 `server.ts`（agent 回報 → 寫入儲存層與狀態機 → 廣播給前端）。之後要擴充功能時，新的傳輸邏輯與商業邏輯要維持這個分工，不要混在一起。
 
-**遠端安裝器**（`collector/src/remote-installer/`）會 SSH 進目標主機，把 agent 執行檔與產生好的 systemd unit 上傳到 SSH 使用者可寫入的暫存目錄，再用 `sudo -n`（非互動模式——遇到需要密碼時直接快速失敗，而不是卡住等一個在這條 exec channel 上根本沒人能回應的密碼提示）把檔案搬進 `/opt/labmon-agent` 與 `/etc/labmon-agent` 並啟用服務。這要求目標主機上的 SSH 使用者對這些操作有免密碼 sudo 權限。安裝成功與否是看 agent 是否真的在時限內透過 WS 連回來，而不是只看 SSH 指令的 exit code——就算每一步 SSH 指令都成功，只要 agent 沒有回連，仍會回報安裝失敗。
+**遠端安裝器**（`collector/src/remote-installer/`）會 SSH 進目標主機，先跑 `uname -m` 判斷目標架構（`x86_64` → `agent-linux-x64`、`aarch64`/`arm64` → `agent-linux-arm64`，其他架構直接失敗），選對的 agent 執行檔跟產生好的 systemd unit 上傳到 SSH 使用者可寫入的暫存目錄，再用 `sudo -S`（從 SSH exec channel 的 stdin 讀密碼）把檔案搬進 `/opt/labmon-agent` 與 `/etc/labmon-agent` 並啟用服務。安裝表單的 `sudoPassword` 欄位是選填，前端留白時直接用 SSH 密碼頂替（兩者相同是常見情況），送到後端的 `InstallRequest.sudoPassword` 一律是非空字串。不會嘗試先用免密碼 sudo、失敗才問——`sudo -S` 對已設好 NOPASSWD 的機器一樣能跑（它根本不會去讀 stdin），所以不用在流程中途暫停詢問密碼。密碼只在記憶體中用一次、不落地，跟 SSH 密碼的處理方式一致；`SshSession.exec()` 支援傳入 stdin 字串，內容是依指令鏈裡 `sudo -S` 出現次數重複的密碼行。安裝成功與否是看 agent 是否真的在時限內透過 WS 連回來，而不是只看 SSH 指令的 exit code——就算每一步 SSH 指令都成功，只要 agent 沒有回連，仍會回報安裝失敗。
 
 **儲存層**（`collector/src/storage/`，用 better-sqlite3）：`host`、`metric_snapshot`（高流量資料，超過 `METRIC_RETENTION_MS` 後由定期清理任務刪除）、`status_event`（永久保留的離線歷史稽核紀錄，不會被清理）、`system_config`（key/value，目前只存通知信箱）。
 
@@ -56,4 +56,4 @@ npx vitest run path/to/some.test.ts --workspace=packages/collector   # 只跑單
 
 # Docker 部署
 
-容器裡只跑 `collector` 和 `frontend`；agent 刻意永遠不進容器。Collector image 的 build 階段會順便用 Bun 把 agent 執行檔編好並打包進去，所以剛部署好的 collector，遠端安裝功能就能直接使用。
+容器裡只跑 `collector` 和 `frontend`；agent 刻意永遠不進容器。Collector image 的 build 階段會順便用 Bun 把 x64 跟 arm64 兩種架構的 agent 執行檔都編好並打包進去（實驗室機器不假設只有一種 CPU 架構），所以剛部署好的 collector，遠端安裝功能就能直接使用。

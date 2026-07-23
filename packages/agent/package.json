@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build --compile ./src/index.ts --outfile ./dist-bin/agent",
+    "build": "bun build --compile --target=bun-linux-x64 ./src/index.ts --outfile ./dist-bin/agent-linux-x64 && bun build --compile --target=bun-linux-arm64 ./src/index.ts --outfile ./dist-bin/agent-linux-arm64",
     "dev": "LABMON_AGENT_CONFIG=dev-config.json tsx src/index.ts",
     "start": "bun run src/index.ts",
     "test": "vitest run"
