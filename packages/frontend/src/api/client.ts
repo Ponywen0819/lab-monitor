@@ -1,4 +1,4 @@
-import type { HostSnapshot, InstallRequest, MetricSnapshot, SystemConfig } from "@labmon/shared";
+import type { HostSnapshot, InstallRequest, MetricSnapshot, NasHostConfig, SystemConfig } from "@labmon/shared";
 
 // Falls back to the collector's documented default port so `npm run dev`
 // works out of the box without requiring a .env file.
@@ -60,4 +60,12 @@ export function updateConfig(notifyEmail: string): Promise<SystemConfig> {
 
 export function deleteHost(hostId: string): Promise<void> {
   return sendNoBody("DELETE", `/api/hosts/${encodeURIComponent(hostId)}`);
+}
+
+export function fetchNasHosts(): Promise<NasHostConfig[]> {
+  return getJson<NasHostConfig[]>("/api/nas-hosts");
+}
+
+export function addNasHost(name: string, ip: string): Promise<NasHostConfig> {
+  return sendJson<NasHostConfig>("POST", "/api/nas-hosts", { name, ip });
 }
