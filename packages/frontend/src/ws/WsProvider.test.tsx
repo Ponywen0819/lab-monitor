@@ -303,4 +303,33 @@ describe("WsProvider", () => {
     act(() => second.onopen?.());
     expect(readConnected()).toBe(true);
   });
+
+  it("drops a message that arrives on a superseded socket instead of processing it twice", () => {
+    // Models the StrictMode dev double-invoke: the old socket's close is
+    // still in flight (server hasn't deregistered it yet) when the new one
+    // is already live, so a broadcast can reach both. Reconnect is the only
+    // way to get two FakeWebSocket instances from outside the module, but
+    // the guard under test doesn't care why there are two -- only that
+    // wsRef.current has moved on.
+    mockedFetchHosts.mockResolvedValue([]);
+    render(
+      <WsProvider>
+        <Consumer />
+      </WsProvider>,
+    );
+    const first = FakeWebSocket.instances[0];
+
+    vi.useFakeTimers();
+    act(() => first.onclose?.());
+    act(() => vi.advanceTimersByTime(3000));
+    const second = FakeWebSocket.instances[1];
+
+    const staleHost = makeHost({ id: "stale" });
+    act(() => first.onmessage?.({ data: JSON.stringify({ type: "host_update", host: staleHost }) }));
+    expect(readHosts().has("stale")).toBe(false);
+
+    const freshHost = makeHost({ id: "fresh" });
+    act(() => second.onmessage?.({ data: JSON.stringify({ type: "host_update", host: freshHost }) }));
+    expect(readHosts().has("fresh")).toBe(true);
+  });
 });
