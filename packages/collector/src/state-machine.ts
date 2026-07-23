@@ -50,6 +50,16 @@ export class OfflineStateMachine extends EventEmitter {
         offlineSinceAt: null,
         escalationTimer: null,
       });
+      // A brand-new hostId's first signalUp must still emit -- the Remote
+      // Installer's success detection (waitForOnline) has nothing else to
+      // key off of for a host it just minted and has never seen before.
+      this.emitStatusChange({
+        hostId,
+        status: "online",
+        previousStatus: null,
+        timestamp,
+        wasNotified: false,
+      });
       return;
     }
 

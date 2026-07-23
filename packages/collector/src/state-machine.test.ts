@@ -20,15 +20,17 @@ describe("OfflineStateMachine", () => {
     vi.useRealTimers();
   });
 
-  it("signalUp on a never-seen hostId creates it as online without emitting", () => {
+  it("signalUp on a never-seen hostId creates it as online and emits with previousStatus null", () => {
     machine.signalUp("host-1");
 
     expect(machine.getHostState("host-1")?.status).toBe("online");
-    expect(events).toHaveLength(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ status: "online", previousStatus: null, wasNotified: false });
   });
 
   it("signalDown from online transitions immediately to disconnected", () => {
     machine.signalUp("host-1");
+    events.length = 0; // drop the first-seen "online" bootstrap event
     machine.signalDown("host-1");
 
     expect(machine.getHostState("host-1")?.status).toBe("disconnected");
@@ -42,6 +44,7 @@ describe("OfflineStateMachine", () => {
 
   it("escalates disconnected -> offline -> notified when no signalUp arrives", () => {
     machine.signalUp("host-1");
+    events.length = 0; // drop the first-seen "online" bootstrap event
     machine.signalDown("host-1");
     expect(machine.getHostState("host-1")?.status).toBe("disconnected");
 
@@ -104,6 +107,7 @@ describe("OfflineStateMachine", () => {
 
   it("repeated signalDown calls while already non-online do not reset the escalation timer", () => {
     machine.signalUp("host-1");
+    events.length = 0; // drop the first-seen "online" bootstrap event
 
     machine.signalDown("host-1");
     vi.advanceTimersByTime(20_000);
