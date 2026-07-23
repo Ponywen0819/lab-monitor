@@ -29,3 +29,4 @@ packages/agent/dist-bin/
 .DS_Store
 .vscode/
 .idea/
+packages/agent/dev-config.json

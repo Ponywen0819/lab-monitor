@@ -89,7 +89,7 @@ VITE_WS_URL=ws://localhost:8080
 Agent 平常不需要每次改動都編成執行檔，直接用 Bun 跑原始碼最快：
 
 ```bash
-LABMON_AGENT_CONFIG=/path/to/dev-config.json bun run --cwd packages/agent src/index.ts
+LABMON_AGENT_CONFIG=dev-config.json bun run --cwd packages/agent src/index.ts
 ```
 
 `dev-config.json` 範例（正式環境是 Remote Installer 在安裝時自動產生這份檔案，路徑固定在受監控主機的 `/etc/labmon-agent/config.json`）：
