@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
-import type { DiskPartition, GpuInfo, Host, HostMetrics, MetricSnapshot, StatusEvent } from "@labmon/shared";
+import type { DiskPartition, GpuInfo, Host, HostMetrics, MetricSnapshot, NasHostConfig, StatusEvent } from "@labmon/shared";
 import { SCHEMA_SQL } from "./schema.js";
 
 interface MetricSnapshotRow {
@@ -57,6 +57,38 @@ export class Storage {
 
   listHosts(): Host[] {
     return this.db.prepare(`SELECT id, name, type FROM host`).all() as Host[];
+  }
+
+  // No ON DELETE CASCADE on the schema's REFERENCES host(id), so metric_snapshot
+  // and status_event rows are cleared explicitly; wrapped in a transaction so a
+  // crash mid-delete can't leave orphaned metric/status rows behind. The
+  // nas_host delete is a harmless no-op for agent hostIds.
+  deleteHost(id: string): void {
+    const runDelete = this.db.transaction((hostId: string) => {
+      this.db.prepare(`DELETE FROM metric_snapshot WHERE host_id = ?`).run(hostId);
+      this.db.prepare(`DELETE FROM status_event WHERE host_id = ?`).run(hostId);
+      this.db.prepare(`DELETE FROM nas_host WHERE id = ?`).run(hostId);
+      this.db.prepare(`DELETE FROM host WHERE id = ?`).run(hostId);
+    });
+    runDelete(id);
+  }
+
+  // Writes both the nas_host row (id/name/ip) and the generic host row
+  // (id/name/type) together, in one transaction, so the two never drift apart.
+  addNasHost(nasHost: NasHostConfig): void {
+    const runInsert = this.db.transaction((host: NasHostConfig) => {
+      this.db
+        .prepare(`INSERT INTO host (id, name, type) VALUES (@id, @name, 'nas')`)
+        .run({ id: host.id, name: host.name });
+      this.db
+        .prepare(`INSERT INTO nas_host (id, name, ip) VALUES (@id, @name, @ip)`)
+        .run(host);
+    });
+    runInsert(nasHost);
+  }
+
+  listNasHosts(): NasHostConfig[] {
+    return this.db.prepare(`SELECT id, name, ip FROM nas_host`).all() as NasHostConfig[];
   }
 
   insertMetricSnapshot(snapshot: MetricSnapshot): void {

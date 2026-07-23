@@ -8,6 +8,7 @@ import { createHttpServer, type HttpServer } from "./http-server.js";
 import { createStorage, type Storage } from "./storage/db.js";
 import { createOfflineStateMachine, type OfflineStateMachine } from "./state-machine.js";
 import type { RemoteInstaller } from "./remote-installer/index.js";
+import type { NasProber } from "./nas-prober.js";
 
 async function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -38,6 +39,11 @@ describe("createHttpServer", () => {
   let stateMachine: OfflineStateMachine;
   let installAgentMock: ReturnType<typeof vi.fn>;
   let remoteInstaller: RemoteInstaller;
+  let addNasHostMock: ReturnType<typeof vi.fn>;
+  let removeNasHostMock: ReturnType<typeof vi.fn>;
+  let nasProber: NasProber;
+  let onHostRemovedMock: ReturnType<typeof vi.fn>;
+  let onHostUpdatedMock: ReturnType<typeof vi.fn>;
   let port: number;
   let server: HttpServer;
   let base: string;
@@ -48,10 +54,23 @@ describe("createHttpServer", () => {
     stateMachine = createOfflineStateMachine();
     installAgentMock = vi.fn((_request: InstallRequest) => "install-id");
     remoteInstaller = { installAgent: installAgentMock } as unknown as RemoteInstaller;
+    addNasHostMock = vi.fn();
+    removeNasHostMock = vi.fn();
+    nasProber = { addHost: addNasHostMock, removeHost: removeNasHostMock } as unknown as NasProber;
+    onHostRemovedMock = vi.fn();
+    onHostUpdatedMock = vi.fn();
 
     port = await getFreePort();
     base = `http://localhost:${port}`;
-    server = createHttpServer({ port, storage, stateMachine, remoteInstaller });
+    server = createHttpServer({
+      port,
+      storage,
+      stateMachine,
+      remoteInstaller,
+      nasProber,
+      onHostRemoved: onHostRemovedMock,
+      onHostUpdated: onHostUpdatedMock,
+    });
     server.start();
   });
 
@@ -131,6 +150,113 @@ describe("createHttpServer", () => {
     });
   });
 
+  describe("DELETE /api/hosts/:id", () => {
+    it("returns 404 for an unknown host", async () => {
+      const res = await fetch(`${base}/api/hosts/nope`, { method: "DELETE" });
+      expect(res.status).toBe(404);
+      expect(onHostRemovedMock).not.toHaveBeenCalled();
+    });
+
+    it("returns 409 and does not delete when the host is online", async () => {
+      storage.upsertHost({ id: "h1", name: "Host One", type: "agent" });
+      stateMachine.signalUp("h1");
+
+      const res = await fetch(`${base}/api/hosts/h1`, { method: "DELETE" });
+
+      expect(res.status).toBe(409);
+      expect(storage.getHost("h1")).toBeDefined();
+      expect(onHostRemovedMock).not.toHaveBeenCalled();
+    });
+
+    it("deletes a non-online host, its metrics/status history, and notifies onHostRemoved", async () => {
+      storage.upsertHost({ id: "h1", name: "Host One", type: "agent" });
+      storage.insertMetricSnapshot({ hostId: "h1", timestamp: 1000, metrics: sampleMetrics });
+      storage.insertStatusEvent({ hostId: "h1", status: "offline", timestamp: 1000 });
+      stateMachine.signalUp("h1");
+      stateMachine.signalDown("h1"); // -> "disconnected", still not "online"
+
+      const res = await fetch(`${base}/api/hosts/h1`, { method: "DELETE" });
+
+      expect(res.status).toBe(200);
+      expect(storage.getHost("h1")).toBeUndefined();
+      expect(storage.getRecentMetrics("h1", 0)).toEqual([]);
+      expect(stateMachine.getHostState("h1")).toBeUndefined();
+      expect(onHostRemovedMock).toHaveBeenCalledWith("h1");
+      expect(removeNasHostMock).toHaveBeenCalledWith("h1");
+    });
+
+    it("allows re-registering the same hostId as brand-new after deletion", async () => {
+      storage.upsertHost({ id: "h1", name: "Host One", type: "agent" });
+      stateMachine.signalUp("h1");
+      stateMachine.signalDown("h1");
+      await fetch(`${base}/api/hosts/h1`, { method: "DELETE" });
+
+      stateMachine.signalUp("h1");
+      expect(stateMachine.getHostState("h1")?.status).toBe("online");
+    });
+  });
+
+  describe("GET /api/nas-hosts", () => {
+    it("returns [] when none have been added", async () => {
+      const res = await fetch(`${base}/api/nas-hosts`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual([]);
+    });
+
+    it("reflects previously added hosts", async () => {
+      storage.addNasHost({ id: "nas-1", name: "Synology", ip: "10.0.0.5" });
+      const res = await fetch(`${base}/api/nas-hosts`);
+      expect(await res.json()).toEqual([{ id: "nas-1", name: "Synology", ip: "10.0.0.5" }]);
+    });
+  });
+
+  describe("POST /api/nas-hosts", () => {
+    it("creates the host, registers it with the prober, and broadcasts an update", async () => {
+      const res = await fetch(`${base}/api/nas-hosts`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ name: "Synology", ip: "10.0.0.5" }),
+      });
+
+      expect(res.status).toBe(201);
+      const body = await res.json();
+      expect(body).toMatchObject({ name: "Synology", ip: "10.0.0.5" });
+      expect(typeof body.id).toBe("string");
+
+      expect(storage.getHost(body.id)).toEqual({ id: body.id, name: "Synology", type: "nas" });
+      expect(storage.listNasHosts()).toEqual([{ id: body.id, name: "Synology", ip: "10.0.0.5" }]);
+      expect(addNasHostMock).toHaveBeenCalledWith({ id: body.id, name: "Synology", ip: "10.0.0.5" });
+      expect(onHostUpdatedMock).toHaveBeenCalledWith(body.id);
+    });
+
+    const invalidBodies: Record<string, unknown> = {
+      "missing name": { ip: "10.0.0.5" },
+      "empty name": { name: "", ip: "10.0.0.5" },
+      "missing ip": { name: "Synology" },
+      "empty ip": { name: "Synology", ip: "" },
+      "non-string ip": { name: "Synology", ip: 5 },
+    };
+
+    for (const [label, body] of Object.entries(invalidBodies)) {
+      it(`returns 400 without registering anything for ${label}`, async () => {
+        const res = await fetch(`${base}/api/nas-hosts`, {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify(body),
+        });
+
+        expect(res.status).toBe(400);
+        expect(addNasHostMock).not.toHaveBeenCalled();
+        expect(storage.listNasHosts()).toEqual([]);
+      });
+    }
+  });
+
+  it("returns 405 for a non-GET/POST method on /api/nas-hosts", async () => {
+    const res = await fetch(`${base}/api/nas-hosts`, { method: "DELETE" });
+    expect(res.status).toBe(405);
+  });
+
   describe("GET /api/config", () => {
     it("returns null when no notify_email has been set", async () => {
       const res = await fetch(`${base}/api/config`);
@@ -193,7 +319,13 @@ describe("createHttpServer", () => {
   describe("POST /api/install", () => {
     it("calls remoteInstaller.installAgent and returns 202 with its installId", async () => {
       installAgentMock.mockReturnValue("install-abc");
-      const request = { targetIp: "10.0.0.5", sshPort: 22, username: "root", password: "hunter2" };
+      const request = {
+        targetIp: "10.0.0.5",
+        sshPort: 22,
+        username: "root",
+        password: "hunter2",
+        sudoPassword: "sudosecret",
+      };
 
       const res = await fetch(`${base}/api/install`, {
         method: "POST",
@@ -207,11 +339,12 @@ describe("createHttpServer", () => {
     });
 
     const invalidBodies: Record<string, unknown> = {
-      "missing targetIp": { sshPort: 22, username: "root", password: "p" },
-      "non-integer sshPort": { targetIp: "10.0.0.5", sshPort: 22.5, username: "root", password: "p" },
-      "negative sshPort": { targetIp: "10.0.0.5", sshPort: -1, username: "root", password: "p" },
-      "missing username": { targetIp: "10.0.0.5", sshPort: 22, password: "p" },
-      "missing password": { targetIp: "10.0.0.5", sshPort: 22, username: "root" },
+      "missing targetIp": { sshPort: 22, username: "root", password: "p", sudoPassword: "p" },
+      "non-integer sshPort": { targetIp: "10.0.0.5", sshPort: 22.5, username: "root", password: "p", sudoPassword: "p" },
+      "negative sshPort": { targetIp: "10.0.0.5", sshPort: -1, username: "root", password: "p", sudoPassword: "p" },
+      "missing username": { targetIp: "10.0.0.5", sshPort: 22, password: "p", sudoPassword: "p" },
+      "missing password": { targetIp: "10.0.0.5", sshPort: 22, username: "root", sudoPassword: "p" },
+      "missing sudoPassword": { targetIp: "10.0.0.5", sshPort: 22, username: "root", password: "p" },
     };
 
     for (const [label, body] of Object.entries(invalidBodies)) {

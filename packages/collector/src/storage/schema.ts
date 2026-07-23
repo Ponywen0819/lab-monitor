@@ -32,4 +32,13 @@ CREATE TABLE IF NOT EXISTS system_config (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Ping-only hosts added from the frontend (see http-server.ts POST /api/nas-hosts),
+-- replacing what used to be a startup-time NAS_HOSTS env var. Row lifetime is tied
+-- to the matching host(id) row -- both are written/deleted together.
+CREATE TABLE IF NOT EXISTS nas_host (
+  id TEXT PRIMARY KEY REFERENCES host(id),
+  name TEXT NOT NULL,
+  ip TEXT NOT NULL
+);
 `;

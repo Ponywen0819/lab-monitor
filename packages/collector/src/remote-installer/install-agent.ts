@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { InstallProgressEvent, InstallRequest, InstallStage } from "@labmon/shared";
 import type { Storage } from "../storage/db.js";
@@ -11,11 +12,38 @@ export interface InstallAgentDeps {
   storage: Storage;
   stateMachine: OfflineStateMachine;
   sshKeyPath: string;
-  agentBinaryPath: string;
+  agentBinaryDir: string;
   collectorWsUrl: string;
   connectTimeoutMs: number;
   waitForConnectionTimeoutMs: number;
   emit: (event: InstallProgressEvent) => void;
+}
+
+type AgentArch = "x64" | "arm64";
+
+// The lab isn't necessarily one CPU architecture (e.g. a mix of x86_64
+// desktops and ARM boards) -- packages/collector/Dockerfile builds one Bun
+// binary per architecture, so the right one is picked per target instead of
+// baking in a single assumption at build time.
+async function detectRemoteArch(session: SshSession): Promise<AgentArch> {
+  const result = await session.exec("uname -m");
+  const arch = result.stdout.trim();
+  if (arch === "x86_64") return "x64";
+  if (arch === "aarch64" || arch === "arm64") return "arm64";
+  throw new Error(`unsupported target architecture "${arch}" from uname -m (only x86_64 and aarch64/arm64 are built)`);
+}
+
+function agentBinaryPathFor(agentBinaryDir: string, arch: AgentArch): string {
+  return join(agentBinaryDir, `agent-linux-${arch}`);
+}
+
+// Best-effort only -- a locked-down shell without `hostname`, or one that
+// returns nothing, falls back to the IP the operator typed in rather than
+// failing the whole install over what's just a cosmetic dashboard label.
+async function detectRemoteHostname(session: SshSession): Promise<string | null> {
+  const result = await session.exec("hostname");
+  const hostname = result.stdout.trim();
+  return result.code === 0 && hostname.length > 0 ? hostname : null;
 }
 
 const AGENT_REMOTE_DIR = "/opt/labmon-agent";
@@ -41,11 +69,21 @@ async function deployAuthorizedKey(session: SshSession, publicKey: string): Prom
   }
 }
 
+// sudo -S reads exactly one line per invocation and otherwise ignores stdin
+// (a NOPASSWD sudoer never touches it at all), so supplying one password
+// line per chained "sudo -S" in the command is correct whether or not this
+// target actually needs one -- no upfront detection required.
+function sudoStdin(sudoPassword: string, command: string): string {
+  const invocations = command.split("sudo -S").length - 1;
+  return `${sudoPassword}\n`.repeat(invocations);
+}
+
 async function uploadAgent(
   session: SshSession,
   agentBinaryPath: string,
   hostId: string,
-  collectorWsUrl: string
+  collectorWsUrl: string,
+  sudoPassword: string
 ): Promise<void> {
   const stagingDir = `/tmp/labmon-install-${hostId}`;
   const mkdirResult = await session.exec(`mkdir -p ${stagingDir}`);
@@ -58,30 +96,29 @@ async function uploadAgent(
   await session.uploadFile(`${stagingDir}/labmon-agent.service`, renderSystemdUnit());
 
   // The staging dir is writable by the SSH user without sudo; moving into
-  // place under /opt and /etc is what needs privilege. -n makes sudo fail
-  // fast instead of hanging on an interactive password prompt with nothing
-  // on the other end of this exec channel to answer it (see module doc).
+  // place under /opt and /etc is what needs privilege. -p '' suppresses the
+  // "[sudo] password for x:" prompt text, which would otherwise land in
+  // stdout/stderr since this runs over a non-interactive exec channel.
   const installCmd = [
-    `sudo -n mkdir -p ${AGENT_REMOTE_DIR} ${CONFIG_REMOTE_DIR}`,
-    `sudo -n mv ${stagingDir}/agent ${AGENT_REMOTE_DIR}/agent`,
-    `sudo -n chmod 755 ${AGENT_REMOTE_DIR}/agent`,
-    `sudo -n mv ${stagingDir}/config.json ${CONFIG_REMOTE_PATH}`,
-    `sudo -n chmod 644 ${CONFIG_REMOTE_PATH}`,
-    `sudo -n mv ${stagingDir}/labmon-agent.service ${SYSTEMD_UNIT_PATH}`,
-    `sudo -n chmod 644 ${SYSTEMD_UNIT_PATH}`,
+    `sudo -S -p '' mkdir -p ${AGENT_REMOTE_DIR} ${CONFIG_REMOTE_DIR}`,
+    `sudo -S -p '' mv ${stagingDir}/agent ${AGENT_REMOTE_DIR}/agent`,
+    `sudo -S -p '' chmod 755 ${AGENT_REMOTE_DIR}/agent`,
+    `sudo -S -p '' mv ${stagingDir}/config.json ${CONFIG_REMOTE_PATH}`,
+    `sudo -S -p '' chmod 644 ${CONFIG_REMOTE_PATH}`,
+    `sudo -S -p '' mv ${stagingDir}/labmon-agent.service ${SYSTEMD_UNIT_PATH}`,
+    `sudo -S -p '' chmod 644 ${SYSTEMD_UNIT_PATH}`,
     `rmdir ${stagingDir}`,
   ].join(" && ");
 
-  const result = await session.exec(installCmd);
+  const result = await session.exec(installCmd, sudoStdin(sudoPassword, installCmd));
   if (result.code !== 0) {
     throw new Error(`failed to install agent files (exit ${result.code}): ${result.stderr || result.stdout}`);
   }
 }
 
-async function startService(session: SshSession): Promise<void> {
-  const result = await session.exec(
-    "sudo -n systemctl daemon-reload && sudo -n systemctl enable --now labmon-agent.service"
-  );
+async function startService(session: SshSession, sudoPassword: string): Promise<void> {
+  const command = "sudo -S -p '' systemctl daemon-reload && sudo -S -p '' systemctl enable --now labmon-agent.service";
+  const result = await session.exec(command, sudoStdin(sudoPassword, command));
   if (result.code !== 0) {
     throw new Error(`failed to start labmon-agent.service (exit ${result.code}): ${result.stderr || result.stdout}`);
   }
@@ -137,26 +174,31 @@ export async function runInstall(installId: string, request: InstallRequest, dep
     emitStage("deploying_key", "Installing collector's public key into authorized_keys");
     await deployAuthorizedKey(session, keyPair.publicKey);
 
+    const remoteHostname = await detectRemoteHostname(session);
+
     const hostId = randomUUID();
     // Registered as soon as the hostId exists, before uploading/waiting, so
     // the host is visible (as not-yet-online) even while install is in flight.
-    deps.storage.upsertHost({ id: hostId, name: request.targetIp, type: "agent" });
+    deps.storage.upsertHost({ id: hostId, name: remoteHostname ?? request.targetIp, type: "agent" });
 
     emitStage("uploading_agent", "Uploading agent binary and configuration", { hostId });
 
-    if (!existsSync(deps.agentBinaryPath)) {
+    const arch = await detectRemoteArch(session);
+    const agentBinaryPath = agentBinaryPathFor(deps.agentBinaryDir, arch);
+
+    if (!existsSync(agentBinaryPath)) {
       emitStage(
         "failed",
-        `agent binary not found at ${deps.agentBinaryPath} -- build packages/agent first`,
+        `agent binary not found at ${agentBinaryPath} -- build packages/agent first`,
         { hostId, success: false }
       );
       return;
     }
 
-    await uploadAgent(session, deps.agentBinaryPath, hostId, deps.collectorWsUrl);
+    await uploadAgent(session, agentBinaryPath, hostId, deps.collectorWsUrl, request.sudoPassword);
 
     emitStage("starting_service", "Enabling and starting labmon-agent.service", { hostId });
-    await startService(session);
+    await startService(session, request.sudoPassword);
 
     emitStage("waiting_for_connection", "Waiting for the agent to connect back to the collector", { hostId });
 

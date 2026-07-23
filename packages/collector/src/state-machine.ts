@@ -110,6 +110,19 @@ export class OfflineStateMachine extends EventEmitter {
     };
   }
 
+  /**
+   * Drops all liveness state for a deleted host, clearing any pending
+   * escalation timer. A later signalUp for the same hostId (e.g. a NAS
+   * still configured in NAS_HOSTS, or an agent that reconnects) is then
+   * treated as brand-new rather than resuming stale state.
+   */
+  removeHost(hostId: string): void {
+    const host = this.hosts.get(hostId);
+    if (!host) return;
+    this.clearTimer(host);
+    this.hosts.delete(hostId);
+  }
+
   private transitionToDisconnected(hostId: string, host: HostLivenessState, timestamp: number): void {
     const previousStatus = host.status;
     host.status = "disconnected";

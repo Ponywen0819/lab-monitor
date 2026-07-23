@@ -4,6 +4,10 @@ export interface InstallRequest {
   username: string;
   /** Used once to establish trust, never persisted. See blueprint 1.6/3.6. */
   password: string;
+  /** Piped to `sudo -S` over the same SSH session, never persisted. Always
+   *  collected up front rather than only on demand, so the install never
+   *  pauses mid-flow waiting on a prompt. */
+  sudoPassword: string;
 }
 
 export type InstallStage =

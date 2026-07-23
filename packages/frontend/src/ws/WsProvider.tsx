@@ -70,13 +70,23 @@ export function WsProvider({ children }: { children: ReactNode }) {
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
 
+    // Closing a socket is a handshake, not instant -- under StrictMode's
+    // dev-only double-invoke of this effect (mount -> cleanup -> mount
+    // again), the first socket's close can still be in flight when the
+    // second one is already live, so the collector briefly has both
+    // registered and broadcasts to both. Every handler below checks it's
+    // still `wsRef.current` before touching state, so a superseded socket's
+    // late-arriving events (a stray reconnect race in production could
+    // cause the same overlap) are dropped instead of double-processed.
     ws.onopen = () => {
+      if (wsRef.current !== ws) return;
       setConnected(true);
       const subscribe: DashboardSubscribeMessage = { type: "dashboard_subscribe" };
       ws.send(JSON.stringify(subscribe));
     };
 
     ws.onmessage = (event) => {
+      if (wsRef.current !== ws) return;
       let message: CollectorToFrontendMessage;
       try {
         message = JSON.parse(event.data as string) as CollectorToFrontendMessage;
@@ -86,7 +96,10 @@ export function WsProvider({ children }: { children: ReactNode }) {
       handleMessage(message);
     };
 
-    ws.onclose = () => scheduleReconnect();
+    ws.onclose = () => {
+      if (wsRef.current !== ws) return;
+      scheduleReconnect();
+    };
     ws.onerror = () => ws.close();
   }
 
@@ -122,6 +135,16 @@ export function WsProvider({ children }: { children: ReactNode }) {
       setInstallEvents((prev) => {
         const next = new Map(prev);
         next.set(installId, [...(next.get(installId) ?? []), message.event]);
+        return next;
+      });
+      return;
+    }
+
+    if (message.type === "host_removed") {
+      setHosts((prev) => {
+        if (!prev.has(message.hostId)) return prev;
+        const next = new Map(prev);
+        next.delete(message.hostId);
         return next;
       });
       return;

@@ -1,4 +1,4 @@
-import type { HostSnapshot, InstallRequest, MetricSnapshot, SystemConfig } from "@labmon/shared";
+import type { HostSnapshot, InstallRequest, MetricSnapshot, NasHostConfig, SystemConfig } from "@labmon/shared";
 
 // Falls back to the collector's documented default port so `npm run dev`
 // works out of the box without requiring a .env file.
@@ -26,6 +26,15 @@ async function sendJson<T>(method: string, path: string, body: unknown): Promise
   return res.json() as Promise<T>;
 }
 
+async function sendNoBody(method: string, path: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}${path}`, { method });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    const errMsg = detail && typeof detail === "object" && "error" in detail ? String(detail.error) : res.statusText;
+    throw new Error(`${method} ${path} failed: ${res.status} ${errMsg}`);
+  }
+}
+
 export function fetchHosts(): Promise<HostSnapshot[]> {
   return getJson<HostSnapshot[]>("/api/hosts");
 }
@@ -47,4 +56,16 @@ export function fetchConfig(): Promise<SystemConfig> {
 
 export function updateConfig(notifyEmail: string): Promise<SystemConfig> {
   return sendJson<SystemConfig>("PUT", "/api/config", { notifyEmail });
+}
+
+export function deleteHost(hostId: string): Promise<void> {
+  return sendNoBody("DELETE", `/api/hosts/${encodeURIComponent(hostId)}`);
+}
+
+export function fetchNasHosts(): Promise<NasHostConfig[]> {
+  return getJson<NasHostConfig[]>("/api/nas-hosts");
+}
+
+export function addNasHost(name: string, ip: string): Promise<NasHostConfig> {
+  return sendJson<NasHostConfig>("POST", "/api/nas-hosts", { name, ip });
 }

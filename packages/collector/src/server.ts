@@ -7,7 +7,7 @@ import { WsServer } from "./ws-server.js";
 import { createOfflineStateMachine, type OfflineStateMachine } from "./state-machine.js";
 import { createStorage, type Storage } from "./storage/db.js";
 import { getHostSnapshot } from "./host-snapshot.js";
-import { createNasProber, type NasHostConfig } from "./nas-prober.js";
+import { createNasProber } from "./nas-prober.js";
 import { createEmailNotifier } from "./email-notifier.js";
 import { createRemoteInstaller, type RemoteInstaller } from "./remote-installer/index.js";
 import { createHttpServer } from "./http-server.js";
@@ -16,7 +16,6 @@ export interface CollectorServerOptions {
   wsPort: number;
   httpPort: number;
   dbPath: string;
-  nasHosts: NasHostConfig[];
 }
 
 export interface CollectorServer {
@@ -86,7 +85,7 @@ export function createCollectorServer(options: CollectorServerOptions): Collecto
     storage.deleteMetricsOlderThan(Date.now() - METRIC_RETENTION_MS);
   }, RETENTION_SWEEP_INTERVAL_MS);
 
-  const nasProber = createNasProber({ hosts: options.nasHosts, stateMachine, storage });
+  const nasProber = createNasProber({ stateMachine, storage });
   const emailNotifier = createEmailNotifier({ stateMachine, storage });
   const remoteInstaller = createRemoteInstaller({ storage, stateMachine });
 
@@ -99,6 +98,15 @@ export function createCollectorServer(options: CollectorServerOptions): Collecto
     storage,
     stateMachine,
     remoteInstaller,
+    nasProber,
+    onHostRemoved: (hostId) => {
+      nasProber.removeHost(hostId);
+      wsServer.broadcastToFrontends({ type: "host_removed", hostId });
+    },
+    onHostUpdated: (hostId) => {
+      const snapshot = getHostSnapshot(hostId, storage, stateMachine);
+      if (snapshot) wsServer.broadcastToFrontends({ type: "host_update", host: snapshot });
+    },
   });
 
   wsServer.start();

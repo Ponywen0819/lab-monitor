@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   CartesianGrid,
   Legend,
@@ -10,8 +10,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { DiskPartition, MetricSnapshot } from "@labmon/shared";
-import { fetchHostMetrics } from "../api/client";
+import type { DiskPartition, HostSnapshot, MetricSnapshot } from "@labmon/shared";
+import { deleteHost, fetchHostMetrics } from "../api/client";
 import { useHosts } from "../ws/WsProvider";
 
 interface ChartPoint {
@@ -59,6 +59,14 @@ function hasAny(points: ChartPoint[], ...keys: (keyof ChartPoint)[]): boolean {
   return points.some((p) => keys.some((k) => p[k] !== null));
 }
 
+// Total MB isn't drawn as its own line anymore, but it still defines the
+// chart's ceiling (rounded up to a whole MB) so the axis reads as installed
+// capacity rather than just auto-scaling to whatever's been used so far.
+function memYMax(points: ChartPoint[]): number | "dataMax" {
+  const totals = points.map((p) => p.memTotalMB).filter((v): v is number => v !== null);
+  return totals.length > 0 ? Math.ceil(Math.max(...totals)) : "dataMax";
+}
+
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
@@ -67,10 +75,16 @@ function TimeSeriesChart({
   data,
   lines,
   yUnit,
+  yDomain,
+  yAllowDecimals,
+  valueFormatter,
 }: {
   data: ChartPoint[];
   lines: { key: keyof ChartPoint; label: string; color: string }[];
   yUnit?: string;
+  yDomain?: [number | string, number | string];
+  yAllowDecimals?: boolean;
+  valueFormatter?: (value: number) => string;
 }) {
   return (
     <ResponsiveContainer width="100%" height={220}>
@@ -83,8 +97,15 @@ function TimeSeriesChart({
           tickFormatter={formatTime}
           minTickGap={40}
         />
-        <YAxis unit={yUnit} />
-        <Tooltip labelFormatter={(t) => new Date(t as number).toLocaleString()} />
+        <YAxis unit={yUnit} domain={yDomain} allowDecimals={yAllowDecimals} />
+        <Tooltip
+          labelFormatter={(t) => new Date(t as number).toLocaleString()}
+          formatter={
+            valueFormatter
+              ? (value: unknown) => (typeof value === "number" ? valueFormatter(value) : String(value))
+              : undefined
+          }
+        />
         <Legend />
         {lines.map((line) => (
           <Line
@@ -100,6 +121,39 @@ function TimeSeriesChart({
         ))}
       </LineChart>
     </ResponsiveContainer>
+  );
+}
+
+function RemoveHostButton({ host }: { host: HostSnapshot }) {
+  const navigate = useNavigate();
+  const [error, setError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const isOnline = host.status === "online";
+
+  function handleClick(): void {
+    if (!window.confirm(`Remove "${host.name}"? This also deletes its recorded metric history.`)) return;
+    setError(null);
+    setRemoving(true);
+    deleteHost(host.id)
+      .then(() => navigate("/"))
+      .catch((err) => {
+        setError(String(err));
+        setRemoving(false);
+      });
+  }
+
+  return (
+    <div className="remove-host">
+      <button
+        className="danger-button"
+        disabled={isOnline || removing}
+        title={isOnline ? "Host is online -- wait for it to go offline before removing" : undefined}
+        onClick={handleClick}
+      >
+        {removing ? "Removing…" : "Remove host"}
+      </button>
+      {error && <p className="error-text">Failed to remove host: {error}</p>}
+    </div>
   );
 }
 
@@ -130,6 +184,20 @@ export function HostDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, host?.type]);
 
+  // The initial load above is a one-shot REST fetch; live updates arrive via
+  // WsProvider's host_update broadcasts instead, so each new reading is
+  // appended here rather than re-fetched.
+  useEffect(() => {
+    if (!host || host.type !== "agent" || !host.latestMetrics || host.lastSeenAt === null) return;
+    const timestamp = host.lastSeenAt;
+    const metrics = host.latestMetrics;
+    setSnapshots((prev) => {
+      if (!prev) return prev;
+      if (prev.length > 0 && prev[prev.length - 1].timestamp >= timestamp) return prev;
+      return [...prev, { hostId: host.id, timestamp, metrics }];
+    });
+  }, [host?.latestMetrics, host?.lastSeenAt]);
+
   if (!id) return <p>No host id in URL.</p>;
 
   return (
@@ -137,7 +205,10 @@ export function HostDetail() {
       <p>
         <Link to="/">&larr; back to dashboard</Link>
       </p>
-      <h2>{host?.name ?? id}</h2>
+      <div className="page-header">
+        <h2>{host?.name ?? id}</h2>
+        {host && <RemoveHostButton host={host} />}
+      </div>
 
       {!host && <p className="empty-state">Loading host…</p>}
 
@@ -170,7 +241,12 @@ function ChartSet({ data }: { data: ChartPoint[] }) {
       {showCpu && (
         <section className="chart-card">
           <h3>CPU usage (%)</h3>
-          <TimeSeriesChart data={data} lines={[{ key: "cpuUsagePct", label: "CPU %", color: "#2563eb" }]} />
+          <TimeSeriesChart
+            data={data}
+            lines={[{ key: "cpuUsagePct", label: "CPU %", color: "#2563eb" }]}
+            yDomain={[0, 100]}
+            valueFormatter={(v) => v.toFixed(2)}
+          />
         </section>
       )}
 
@@ -179,10 +255,9 @@ function ChartSet({ data }: { data: ChartPoint[] }) {
           <h3>Memory used (MB)</h3>
           <TimeSeriesChart
             data={data}
-            lines={[
-              { key: "memUsedMB", label: "Used MB", color: "#7c3aed" },
-              { key: "memTotalMB", label: "Total MB", color: "#a1a1aa" },
-            ]}
+            lines={[{ key: "memUsedMB", label: "Used MB", color: "#7c3aed" }]}
+            yDomain={[0, memYMax(data)]}
+            yAllowDecimals={false}
           />
         </section>
       )}
@@ -190,7 +265,12 @@ function ChartSet({ data }: { data: ChartPoint[] }) {
       {showDisk && (
         <section className="chart-card">
           <h3>Disk usage (%, aggregate across partitions)</h3>
-          <TimeSeriesChart data={data} lines={[{ key: "diskUsedPct", label: "Disk %", color: "#d97706" }]} />
+          <TimeSeriesChart
+            data={data}
+            lines={[{ key: "diskUsedPct", label: "Disk %", color: "#d97706" }]}
+            yDomain={[0, 100]}
+            valueFormatter={(v) => v.toFixed(2)}
+          />
         </section>
       )}
 
