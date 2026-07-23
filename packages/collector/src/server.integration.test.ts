@@ -78,7 +78,7 @@ describe("createCollectorServer integration", () => {
     dbPath = join(dir, "test.db");
     wsPort = await getFreePort();
     httpPort = await getFreePort();
-    server = createCollectorServer({ wsPort, httpPort, dbPath, nasHosts: [] });
+    server = createCollectorServer({ wsPort, httpPort, dbPath });
   });
 
   afterEach(() => {

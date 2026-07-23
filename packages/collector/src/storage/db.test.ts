@@ -165,6 +165,40 @@ describe("Storage", () => {
       storage.upsertHost(host);
       expect(() => storage.deleteHost(host.id)).not.toThrow();
     });
+
+    it("also removes a matching nas_host row", () => {
+      storage.addNasHost({ id: "nas-1", name: "Synology", ip: "10.0.0.5" });
+
+      storage.deleteHost("nas-1");
+
+      expect(storage.getHost("nas-1")).toBeUndefined();
+      expect(storage.listNasHosts()).toEqual([]);
+    });
+  });
+
+  describe("addNasHost / listNasHosts", () => {
+    it("writes both the nas_host row and a matching host row", () => {
+      storage.addNasHost({ id: "nas-1", name: "Synology", ip: "10.0.0.5" });
+
+      expect(storage.getHost("nas-1")).toEqual({ id: "nas-1", name: "Synology", type: "nas" });
+      expect(storage.listNasHosts()).toEqual([{ id: "nas-1", name: "Synology", ip: "10.0.0.5" }]);
+    });
+
+    it("lists multiple added hosts", () => {
+      storage.addNasHost({ id: "nas-1", name: "Synology", ip: "10.0.0.5" });
+      storage.addNasHost({ id: "nas-2", name: "QNAP", ip: "10.0.0.6" });
+
+      expect(storage.listNasHosts()).toEqual(
+        expect.arrayContaining([
+          { id: "nas-1", name: "Synology", ip: "10.0.0.5" },
+          { id: "nas-2", name: "QNAP", ip: "10.0.0.6" },
+        ])
+      );
+    });
+
+    it("returns [] when none have been added", () => {
+      expect(storage.listNasHosts()).toEqual([]);
+    });
   });
 
   describe("deleteMetricsOlderThan", () => {

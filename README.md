@@ -64,12 +64,11 @@ SQLite 檔案預設寫在 `./data/collector.db`（`data/` 已在 `.gitignore` �
 |---|---|---|
 | `WS_PORT` / `HTTP_PORT` | 監聽埠 | `8080` / `8081` |
 | `DB_PATH` | SQLite 位置 | `./data/collector.db` |
-| `NAS_HOSTS` | 要監控的 NAS，JSON 陣列 `[{"id","name","ip"}]` | `[]`（不監控） |
 | `SMTP_USER` / `SMTP_APP_PASSWORD` | 寄信用的獨立 Gmail 帳號（見 `.env.example` 註解） | 未設定則自動停用通知，不會噴錯 |
 | `COLLECTOR_WS_URL` | 寫入新安裝 Agent 設定檔的回連位址，**必須是區網真實 IP**，不能是 `localhost` | `ws://localhost:8080` |
 | `COLLECTOR_SSH_KEY_PATH` / `AGENT_BINARY_DIR` | 遠端安裝用的 Collector 金鑰路徑 / 存放各架構 Agent 執行檔（`agent-linux-x64`、`agent-linux-arm64`）的目錄 | 見 `packages/collector/src/remote-installer/index.ts` |
 
-沒有設定 `NAS_HOSTS` / SMTP 帳密也能正常開發，這兩個子模組會記 log 並自我停用，不影響其他功能。
+沒有設定 SMTP 帳密也能正常開發，這個子模組會記 log 並自我停用，不影響其他功能。NAS 主機不是環境變數設定的，是透過 Settings 頁面（`POST /api/nas-hosts`）動態新增，存在 SQLite 的 `nas_host` 表裡，新增後立刻開始 ping，不用重啟 collector。
 
 ### 3. Frontend
 
@@ -116,9 +115,9 @@ GPU 相關指標需要本機有 `nvidia-smi`；沒有的話該欄位會回報 `e
 
 ```bash
 npm test                                      # 依序 build shared，再跑三個套件全部測試
-npm run test --workspace=packages/collector   # 只跑 collector（91 tests：狀態機、SQLite、NAS/Email/遠端安裝、WS/HTTP、整合測試）
+npm run test --workspace=packages/collector   # 只跑 collector（117 tests：狀態機、SQLite、NAS/Email/遠端安裝、WS/HTTP、整合測試）
 npm run test --workspace=packages/agent       # 只跑 agent（29 tests：各項 collector、config、WS client）
-npm run test --workspace=packages/frontend    # 只跑 frontend（25 tests：WsProvider、Dashboard、表單頁）
+npm run test --workspace=packages/frontend    # 只跑 frontend（39 tests：WsProvider、Dashboard、表單頁）
 ```
 
 新增功能或修 bug 時，優先在對應套件內加 `*.test.ts`（或 `.tsx`），檔案放在被測檔案旁邊即可（Vitest 設定為 glob `src/**/*.test.ts`）。collector 的 `tsconfig.json` 已排除 `*.test.ts`，不會被打包進 `dist/`。

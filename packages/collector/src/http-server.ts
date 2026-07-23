@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { METRIC_RETENTION_MS, type HostSnapshot, type InstallRequest } from "@labmon/shared";
+import { METRIC_RETENTION_MS, type HostSnapshot, type InstallRequest, type NasHostConfig } from "@labmon/shared";
 import { getHostSnapshot } from "./host-snapshot.js";
 import type { Storage } from "./storage/db.js";
 import type { OfflineStateMachine } from "./state-machine.js";
 import type { RemoteInstaller } from "./remote-installer/index.js";
+import type { NasProber } from "./nas-prober.js";
 
 const NOTIFY_EMAIL_CONFIG_KEY = "notify_email";
 
@@ -12,7 +14,9 @@ export interface HttpServerOptions {
   storage: Storage;
   stateMachine: OfflineStateMachine;
   remoteInstaller: RemoteInstaller;
+  nasProber: NasProber;
   onHostRemoved: (hostId: string) => void;
+  onHostUpdated: (hostId: string) => void;
 }
 
 export interface HttpServer {
@@ -57,6 +61,16 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+function parseNasHostRequest(body: unknown): { name: string; ip: string } | null {
+  if (typeof body !== "object" || body === null) return null;
+  const { name, ip } = body as Record<string, unknown>;
+
+  if (!isNonEmptyString(name)) return null;
+  if (!isNonEmptyString(ip)) return null;
+
+  return { name, ip };
+}
+
 function parseInstallRequest(body: unknown): InstallRequest | null {
   if (typeof body !== "object" || body === null) return null;
   const { targetIp, sshPort, username, password, sudoPassword } = body as Record<string, unknown>;
@@ -75,7 +89,7 @@ function parseInstallRequest(body: unknown): InstallRequest | null {
  * wide-open CORS so the frontend can be served from a different origin in dev.
  */
 export function createHttpServer(options: HttpServerOptions): HttpServer {
-  const { port, storage, stateMachine, remoteInstaller, onHostRemoved } = options;
+  const { port, storage, stateMachine, remoteInstaller, nasProber, onHostRemoved, onHostUpdated } = options;
   let server: Server | null = null;
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -134,8 +148,34 @@ export function createHttpServer(options: HttpServerOptions): HttpServer {
         }
         storage.deleteHost(hostId);
         stateMachine.removeHost(hostId);
+        nasProber.removeHost(hostId);
         onHostRemoved(hostId);
         sendJson(res, 200, { id: hostId });
+        return;
+      }
+
+      if (segments.length === 2 && segments[0] === "api" && segments[1] === "nas-hosts") {
+        if (method === "GET") {
+          sendJson(res, 200, storage.listNasHosts());
+          return;
+        }
+
+        if (method === "POST") {
+          const body = await readJsonBody(req);
+          const parsed = parseNasHostRequest(body);
+          if (!parsed) {
+            sendJson(res, 400, { error: "body must include name (string) and ip (string)" });
+            return;
+          }
+          const nasHost: NasHostConfig = { id: randomUUID(), name: parsed.name, ip: parsed.ip };
+          storage.addNasHost(nasHost);
+          nasProber.addHost(nasHost);
+          onHostUpdated(nasHost.id);
+          sendJson(res, 201, nasHost);
+          return;
+        }
+
+        sendJson(res, 405, { error: "method not allowed" });
         return;
       }
 
