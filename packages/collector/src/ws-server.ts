@@ -92,10 +92,12 @@ export class WsServer extends EventEmitter {
 
     this.agentHostByWs.delete(ws);
     // Only the most recent connection for a hostId owns liveness; a stale
-    // connection closing after a reconnect must not clobber the new one.
+    // connection closing after a reconnect must not clobber the new one --
+    // that means the agent_down signal itself has to be inside this guard
+    // too, not just the connection-table cleanup.
     if (this.agentConnections.get(hostId)?.ws === ws) {
       this.agentConnections.delete(hostId);
+      this.emit("agent_down", hostId);
     }
-    this.emit("agent_down", hostId);
   }
 }
