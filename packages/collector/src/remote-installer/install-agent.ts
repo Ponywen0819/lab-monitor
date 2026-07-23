@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { InstallProgressEvent, InstallRequest, InstallStage } from "@labmon/shared";
 import type { Storage } from "../storage/db.js";
@@ -11,11 +12,29 @@ export interface InstallAgentDeps {
   storage: Storage;
   stateMachine: OfflineStateMachine;
   sshKeyPath: string;
-  agentBinaryPath: string;
+  agentBinaryDir: string;
   collectorWsUrl: string;
   connectTimeoutMs: number;
   waitForConnectionTimeoutMs: number;
   emit: (event: InstallProgressEvent) => void;
+}
+
+type AgentArch = "x64" | "arm64";
+
+// The lab isn't necessarily one CPU architecture (e.g. a mix of x86_64
+// desktops and ARM boards) -- packages/collector/Dockerfile builds one Bun
+// binary per architecture, so the right one is picked per target instead of
+// baking in a single assumption at build time.
+async function detectRemoteArch(session: SshSession): Promise<AgentArch> {
+  const result = await session.exec("uname -m");
+  const arch = result.stdout.trim();
+  if (arch === "x86_64") return "x64";
+  if (arch === "aarch64" || arch === "arm64") return "arm64";
+  throw new Error(`unsupported target architecture "${arch}" from uname -m (only x86_64 and aarch64/arm64 are built)`);
+}
+
+function agentBinaryPathFor(agentBinaryDir: string, arch: AgentArch): string {
+  return join(agentBinaryDir, `agent-linux-${arch}`);
 }
 
 const AGENT_REMOTE_DIR = "/opt/labmon-agent";
@@ -153,16 +172,19 @@ export async function runInstall(installId: string, request: InstallRequest, dep
 
     emitStage("uploading_agent", "Uploading agent binary and configuration", { hostId });
 
-    if (!existsSync(deps.agentBinaryPath)) {
+    const arch = await detectRemoteArch(session);
+    const agentBinaryPath = agentBinaryPathFor(deps.agentBinaryDir, arch);
+
+    if (!existsSync(agentBinaryPath)) {
       emitStage(
         "failed",
-        `agent binary not found at ${deps.agentBinaryPath} -- build packages/agent first`,
+        `agent binary not found at ${agentBinaryPath} -- build packages/agent first`,
         { hostId, success: false }
       );
       return;
     }
 
-    await uploadAgent(session, deps.agentBinaryPath, hostId, deps.collectorWsUrl, request.sudoPassword);
+    await uploadAgent(session, agentBinaryPath, hostId, deps.collectorWsUrl, request.sudoPassword);
 
     emitStage("starting_service", "Enabling and starting labmon-agent.service", { hostId });
     await startService(session, request.sudoPassword);
