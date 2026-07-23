@@ -15,9 +15,7 @@ npm run build --workspace=packages/shared     # 或用 `npm run dev --workspace=
 npm run dev --workspace=packages/collector    # tsx watch：ws://localhost:8080, http://localhost:8081
 npm run dev --workspace=packages/frontend     # Vite dev server：http://localhost:5173
 
-# agent：開發時直接跑原始碼，不用每次改動都重新編譯執行檔
-LABMON_AGENT_CONFIG=/path/to/dev-config.json npx tsx packages/agent/src/index.ts
-# dev-config.json 內容：{ "hostId": "dev-host-1", "collectorWsUrl": "ws://localhost:8080" }
+npm run dev --workspace=packages/agent        # tsx 跑原始碼，預設吃 packages/agent/dev-config.json，不用每次改動都重新編譯執行檔
 
 npm run build --workspace=packages/agent      # 編成 packages/agent/dist-bin/agent（Bun 單一執行檔，這步驟真的需要 Bun，npm 生態沒有現成等價指令）
 npm run build                                 # shared -> collector -> frontend，依序（agent 不含在內，另外用 Bun 編譯）
