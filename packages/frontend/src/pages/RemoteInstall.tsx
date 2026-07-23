@@ -27,7 +27,6 @@ function validate(form: FormState): string | null {
   if (!form.targetIp.trim()) return "Target IP is required.";
   if (!form.username.trim()) return "Username is required.";
   if (!form.password) return "Password is required.";
-  if (!form.sudoPassword) return "Sudo password is required.";
   const port = Number(form.sshPort);
   if (!Number.isInteger(port) || port <= 0) return "SSH port must be a positive integer.";
   return null;
@@ -66,7 +65,7 @@ export function RemoteInstall() {
         sshPort: Number(form.sshPort),
         username: form.username.trim(),
         password: form.password,
-        sudoPassword: form.sudoPassword,
+        sudoPassword: form.sudoPassword || form.password,
       });
       setInstallId(newInstallId);
     } catch (err) {
@@ -156,7 +155,7 @@ export function RemoteInstall() {
         </label>
 
         <label>
-          Sudo password
+          Sudo password (optional, defaults to Password)
           <input
             type="password"
             value={form.sudoPassword}
