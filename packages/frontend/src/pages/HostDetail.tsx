@@ -184,6 +184,20 @@ export function HostDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, host?.type]);
 
+  // The initial load above is a one-shot REST fetch; live updates arrive via
+  // WsProvider's host_update broadcasts instead, so each new reading is
+  // appended here rather than re-fetched.
+  useEffect(() => {
+    if (!host || host.type !== "agent" || !host.latestMetrics || host.lastSeenAt === null) return;
+    const timestamp = host.lastSeenAt;
+    const metrics = host.latestMetrics;
+    setSnapshots((prev) => {
+      if (!prev) return prev;
+      if (prev.length > 0 && prev[prev.length - 1].timestamp >= timestamp) return prev;
+      return [...prev, { hostId: host.id, timestamp, metrics }];
+    });
+  }, [host?.latestMetrics, host?.lastSeenAt]);
+
   if (!id) return <p>No host id in URL.</p>;
 
   return (
