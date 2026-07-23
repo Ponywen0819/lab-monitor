@@ -59,6 +59,14 @@ function hasAny(points: ChartPoint[], ...keys: (keyof ChartPoint)[]): boolean {
   return points.some((p) => keys.some((k) => p[k] !== null));
 }
 
+// Total MB isn't drawn as its own line anymore, but it still defines the
+// chart's ceiling (rounded up to a whole MB) so the axis reads as installed
+// capacity rather than just auto-scaling to whatever's been used so far.
+function memYMax(points: ChartPoint[]): number | "dataMax" {
+  const totals = points.map((p) => p.memTotalMB).filter((v): v is number => v !== null);
+  return totals.length > 0 ? Math.ceil(Math.max(...totals)) : "dataMax";
+}
+
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
@@ -67,10 +75,16 @@ function TimeSeriesChart({
   data,
   lines,
   yUnit,
+  yDomain,
+  yAllowDecimals,
+  valueFormatter,
 }: {
   data: ChartPoint[];
   lines: { key: keyof ChartPoint; label: string; color: string }[];
   yUnit?: string;
+  yDomain?: [number | string, number | string];
+  yAllowDecimals?: boolean;
+  valueFormatter?: (value: number) => string;
 }) {
   return (
     <ResponsiveContainer width="100%" height={220}>
@@ -83,8 +97,15 @@ function TimeSeriesChart({
           tickFormatter={formatTime}
           minTickGap={40}
         />
-        <YAxis unit={yUnit} />
-        <Tooltip labelFormatter={(t) => new Date(t as number).toLocaleString()} />
+        <YAxis unit={yUnit} domain={yDomain} allowDecimals={yAllowDecimals} />
+        <Tooltip
+          labelFormatter={(t) => new Date(t as number).toLocaleString()}
+          formatter={
+            valueFormatter
+              ? (value: unknown) => (typeof value === "number" ? valueFormatter(value) : String(value))
+              : undefined
+          }
+        />
         <Legend />
         {lines.map((line) => (
           <Line
@@ -170,7 +191,12 @@ function ChartSet({ data }: { data: ChartPoint[] }) {
       {showCpu && (
         <section className="chart-card">
           <h3>CPU usage (%)</h3>
-          <TimeSeriesChart data={data} lines={[{ key: "cpuUsagePct", label: "CPU %", color: "#2563eb" }]} />
+          <TimeSeriesChart
+            data={data}
+            lines={[{ key: "cpuUsagePct", label: "CPU %", color: "#2563eb" }]}
+            yDomain={[0, 100]}
+            valueFormatter={(v) => v.toFixed(2)}
+          />
         </section>
       )}
 
@@ -179,10 +205,9 @@ function ChartSet({ data }: { data: ChartPoint[] }) {
           <h3>Memory used (MB)</h3>
           <TimeSeriesChart
             data={data}
-            lines={[
-              { key: "memUsedMB", label: "Used MB", color: "#7c3aed" },
-              { key: "memTotalMB", label: "Total MB", color: "#a1a1aa" },
-            ]}
+            lines={[{ key: "memUsedMB", label: "Used MB", color: "#7c3aed" }]}
+            yDomain={[0, memYMax(data)]}
+            yAllowDecimals={false}
           />
         </section>
       )}
@@ -190,7 +215,12 @@ function ChartSet({ data }: { data: ChartPoint[] }) {
       {showDisk && (
         <section className="chart-card">
           <h3>Disk usage (%, aggregate across partitions)</h3>
-          <TimeSeriesChart data={data} lines={[{ key: "diskUsedPct", label: "Disk %", color: "#d97706" }]} />
+          <TimeSeriesChart
+            data={data}
+            lines={[{ key: "diskUsedPct", label: "Disk %", color: "#d97706" }]}
+            yDomain={[0, 100]}
+            valueFormatter={(v) => v.toFixed(2)}
+          />
         </section>
       )}
 
