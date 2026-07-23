@@ -12,12 +12,13 @@
 # needing this build to run on either target architecture.
 FROM oven/bun:1 AS agent-build
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/agent/package.json packages/agent/package.json
 RUN bun install
 COPY packages/shared packages/shared
 COPY packages/agent packages/agent
+RUN cd packages/shared && bun run build
 RUN cd packages/agent \
  && bun build --compile --target=bun-linux-x64 ./src/index.ts --outfile ./dist-bin/agent-linux-x64 \
  && bun build --compile --target=bun-linux-arm64 ./src/index.ts --outfile ./dist-bin/agent-linux-arm64
