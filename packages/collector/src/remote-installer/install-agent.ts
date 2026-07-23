@@ -37,6 +37,15 @@ function agentBinaryPathFor(agentBinaryDir: string, arch: AgentArch): string {
   return join(agentBinaryDir, `agent-linux-${arch}`);
 }
 
+// Best-effort only -- a locked-down shell without `hostname`, or one that
+// returns nothing, falls back to the IP the operator typed in rather than
+// failing the whole install over what's just a cosmetic dashboard label.
+async function detectRemoteHostname(session: SshSession): Promise<string | null> {
+  const result = await session.exec("hostname");
+  const hostname = result.stdout.trim();
+  return result.code === 0 && hostname.length > 0 ? hostname : null;
+}
+
 const AGENT_REMOTE_DIR = "/opt/labmon-agent";
 const CONFIG_REMOTE_DIR = "/etc/labmon-agent";
 const CONFIG_REMOTE_PATH = `${CONFIG_REMOTE_DIR}/config.json`;
@@ -165,10 +174,12 @@ export async function runInstall(installId: string, request: InstallRequest, dep
     emitStage("deploying_key", "Installing collector's public key into authorized_keys");
     await deployAuthorizedKey(session, keyPair.publicKey);
 
+    const remoteHostname = await detectRemoteHostname(session);
+
     const hostId = randomUUID();
     // Registered as soon as the hostId exists, before uploading/waiting, so
     // the host is visible (as not-yet-online) even while install is in flight.
-    deps.storage.upsertHost({ id: hostId, name: request.targetIp, type: "agent" });
+    deps.storage.upsertHost({ id: hostId, name: remoteHostname ?? request.targetIp, type: "agent" });
 
     emitStage("uploading_agent", "Uploading agent binary and configuration", { hostId });
 

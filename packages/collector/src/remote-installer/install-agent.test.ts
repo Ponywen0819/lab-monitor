@@ -41,14 +41,18 @@ function okExecResult() {
 }
 
 // Default exec mock: every command succeeds with empty output, except
-// `uname -m` (used to pick which architecture's binary to upload), which
-// individual tests override via execMock.mockImplementation to simulate a
-// different target.
-function execImplementationFor(unameOutput: string) {
-  return (command: string) =>
-    command === "uname -m"
-      ? Promise.resolve({ code: 0, stdout: unameOutput, stderr: "" })
-      : Promise.resolve(okExecResult());
+// `uname -m` (picks which architecture's binary to upload) and `hostname`
+// (the display name registered for the host), which individual tests
+// override via execMock.mockImplementation to simulate a different target.
+// hostnameOutput defaults to "" -- an empty/failed hostname lookup is the
+// common case these tests otherwise don't care about, and falls back to
+// request.targetIp exactly like a real locked-down shell would.
+function execImplementationFor(unameOutput: string, hostnameOutput = "") {
+  return (command: string) => {
+    if (command === "uname -m") return Promise.resolve({ code: 0, stdout: unameOutput, stderr: "" });
+    if (command === "hostname") return Promise.resolve({ code: 0, stdout: hostnameOutput, stderr: "" });
+    return Promise.resolve(okExecResult());
+  };
 }
 
 const request: InstallRequest = {
@@ -124,6 +128,46 @@ describe("runInstall", () => {
     expect(host).toEqual({ id: last.hostId, name: request.targetIp, type: "agent" });
 
     expect(closeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("registers the host using the SSH-derived hostname when `hostname` succeeds", async () => {
+    execMock.mockImplementation(execImplementationFor("x86_64\n", "lab-pc-03\n"));
+    const deps = makeDeps({
+      emit: (event) => {
+        events.push(event);
+        if (event.stage === "waiting_for_connection" && event.hostId) {
+          setTimeout(() => stateMachine.signalUp(event.hostId as string), 10);
+        }
+      },
+    });
+
+    await runInstall(randomUUID(), request, deps);
+
+    const last = events[events.length - 1];
+    const host = storage.getHost(last.hostId as string);
+    expect(host?.name).toBe("lab-pc-03");
+  });
+
+  it("falls back to the target IP when the hostname command fails", async () => {
+    execMock.mockImplementation((command: string) => {
+      if (command === "uname -m") return Promise.resolve({ code: 0, stdout: "x86_64\n", stderr: "" });
+      if (command === "hostname") return Promise.resolve({ code: 127, stdout: "", stderr: "command not found" });
+      return Promise.resolve(okExecResult());
+    });
+    const deps = makeDeps({
+      emit: (event) => {
+        events.push(event);
+        if (event.stage === "waiting_for_connection" && event.hostId) {
+          setTimeout(() => stateMachine.signalUp(event.hostId as string), 10);
+        }
+      },
+    });
+
+    await runInstall(randomUUID(), request, deps);
+
+    const last = events[events.length - 1];
+    const host = storage.getHost(last.hostId as string);
+    expect(host?.name).toBe(request.targetIp);
   });
 
   it("pipes the sudo password once per chained sudo -S invocation, for both the file-install and service-start commands", async () => {
