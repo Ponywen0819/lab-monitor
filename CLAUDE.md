@@ -12,7 +12,7 @@ npm install                                   # 專案根目錄執行一次
 # 改了 packages/shared 之後——其他套件吃的是它的 dist/，不是原始碼
 npm run build --workspace=packages/shared     # 或用 `npm run dev --workspace=packages/shared` 開 watch mode
 
-npm run dev --workspace=packages/collector    # tsx watch：ws://localhost:8080, http://localhost:8081
+npm run dev --workspace=packages/collector    # tsx watch，會用 Node 內建 --env-file-if-exists 讀根目錄 .env：ws://localhost:8080, http://localhost:8081
 npm run dev --workspace=packages/frontend     # Vite dev server：http://localhost:5173
 
 npm run dev --workspace=packages/agent        # tsx 跑原始碼，預設吃 packages/agent/dev-config.json，不用每次改動都重新編譯執行檔

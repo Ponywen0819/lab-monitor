@@ -52,6 +52,8 @@ npm run build --workspace=packages/shared
 npm run dev --workspace=packages/collector    # tsx watch，改檔自動重啟
 ```
 
+會用 Node 內建的 `--env-file-if-exists` 讀取專案根目錄的 `.env`（檔案不存在也不會報錯，直接跳過）；`npm run start` 也一樣。改了 `.env` 記得重啟這個指令才會生效——只是重啟並不會回頭去改已經裝在受監控主機上的 agent 設定檔，那份是安裝當下寫死的（見「除錯小抄」）。
+
 預設監聽：
 - `ws://localhost:8080` — Agent / Dashboard 共用的 WebSocket
 - `http://localhost:8081` — HTTP API（`GET /api/hosts`、`GET /api/hosts/:id/metrics`、`GET|PUT /api/config`、`POST /api/install`）
@@ -150,4 +152,5 @@ docker compose up -d
 - **改了 shared 但其他套件行為沒變** → 忘記 `npm run build --workspace=packages/shared` 了。
 - **Frontend 連不上 collector** → 檢查 `packages/frontend/.env` 的埠號是否跟 collector 實際監聽的一致；瀏覽器主控台看 WS 是否一直重連。
 - **遠端安裝一直卡在 waiting_for_connection 最後 failed** → 先確認 `COLLECTOR_WS_URL` 是不是設成 `localhost`（對受監控主機來說沒有意義，一定要填 Collector 所在主機的區網 IP）。
+- **改了 `COLLECTOR_WS_URL` 重啟 collector，已經裝好的 agent 卻還是連到舊位址** → 這個值只在**安裝當下**被讀一次、寫進那台主機的 `/etc/labmon-agent/config.json`，之後不會被重新推送。修法：在 dashboard 用 Remove host 移掉這台後重新跑一次 Remote Install，或直接 SSH 進去手動改那個檔案再 `sudo systemctl restart labmon-agent`。
 - **Email 通知沒有寄出** → 檢查 log 是否印出 `[email-notifier] SMTP_USER/SMTP_APP_PASSWORD not set` 或 `No "notify_email" configured`，兩者都是「已知未設定、正常跳過」，不是錯誤。
