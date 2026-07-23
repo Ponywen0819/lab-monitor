@@ -61,7 +61,7 @@ export function Settings() {
       {loadError && <p className="error-text">Failed to load settings: {loadError}</p>}
 
       {!loading && !loadError && (
-        <form className="settings-form" onSubmit={(e) => void handleSubmit(e)}>
+        <form className="settings-form" noValidate onSubmit={(e) => void handleSubmit(e)}>
           <label>
             Notification email
             <input

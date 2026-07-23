@@ -117,7 +117,7 @@ export function RemoteInstall() {
   return (
     <div>
       <h2>Remote Install</h2>
-      <form className="settings-form" onSubmit={(e) => void handleSubmit(e)}>
+      <form className="settings-form" noValidate onSubmit={(e) => void handleSubmit(e)}>
         <label>
           Target IP
           <input
