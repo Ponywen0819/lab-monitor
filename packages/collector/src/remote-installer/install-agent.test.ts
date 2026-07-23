@@ -45,6 +45,7 @@ const request: InstallRequest = {
   sshPort: 22,
   username: "ubuntu",
   password: "hunter2",
+  sudoPassword: "sudosecret",
 };
 
 describe("runInstall", () => {
@@ -110,6 +111,27 @@ describe("runInstall", () => {
     expect(host).toEqual({ id: last.hostId, name: request.targetIp, type: "agent" });
 
     expect(closeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("pipes the sudo password once per chained sudo -S invocation, for both the file-install and service-start commands", async () => {
+    const deps = makeDeps({
+      emit: (event) => {
+        events.push(event);
+        if (event.stage === "waiting_for_connection" && event.hostId) {
+          setTimeout(() => stateMachine.signalUp(event.hostId as string), 10);
+        }
+      },
+    });
+
+    await runInstall(randomUUID(), request, deps);
+
+    const sudoCalls = execMock.mock.calls.filter(([command]) => command.includes("sudo -S"));
+    expect(sudoCalls).toHaveLength(2); // the file-install chain, then the systemctl chain
+
+    for (const [command, stdin] of sudoCalls) {
+      const sudoCount = (command.match(/sudo -S/g) ?? []).length;
+      expect(stdin).toBe("sudosecret\n".repeat(sudoCount));
+    }
   });
 
   it("fails with the underlying error message when SSH connect fails", async () => {

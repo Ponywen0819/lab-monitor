@@ -8,9 +8,10 @@ interface FormState {
   sshPort: string;
   username: string;
   password: string;
+  sudoPassword: string;
 }
 
-const EMPTY_FORM: FormState = { targetIp: "", sshPort: "22", username: "", password: "" };
+const EMPTY_FORM: FormState = { targetIp: "", sshPort: "22", username: "", password: "", sudoPassword: "" };
 
 const STAGE_LABEL: Record<InstallStage, string> = {
   connecting: "Connecting",
@@ -26,6 +27,7 @@ function validate(form: FormState): string | null {
   if (!form.targetIp.trim()) return "Target IP is required.";
   if (!form.username.trim()) return "Username is required.";
   if (!form.password) return "Password is required.";
+  if (!form.sudoPassword) return "Sudo password is required.";
   const port = Number(form.sshPort);
   if (!Number.isInteger(port) || port <= 0) return "SSH port must be a positive integer.";
   return null;
@@ -64,6 +66,7 @@ export function RemoteInstall() {
         sshPort: Number(form.sshPort),
         username: form.username.trim(),
         password: form.password,
+        sudoPassword: form.sudoPassword,
       });
       setInstallId(newInstallId);
     } catch (err) {
@@ -149,6 +152,15 @@ export function RemoteInstall() {
             type="password"
             value={form.password}
             onChange={(e) => updateField("password", e.target.value)}
+          />
+        </label>
+
+        <label>
+          Sudo password
+          <input
+            type="password"
+            value={form.sudoPassword}
+            onChange={(e) => updateField("sudoPassword", e.target.value)}
           />
         </label>
 

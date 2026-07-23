@@ -59,14 +59,15 @@ function isNonEmptyString(value: unknown): value is string {
 
 function parseInstallRequest(body: unknown): InstallRequest | null {
   if (typeof body !== "object" || body === null) return null;
-  const { targetIp, sshPort, username, password } = body as Record<string, unknown>;
+  const { targetIp, sshPort, username, password, sudoPassword } = body as Record<string, unknown>;
 
   if (!isNonEmptyString(targetIp)) return null;
   if (typeof sshPort !== "number" || !Number.isInteger(sshPort) || sshPort <= 0) return null;
   if (!isNonEmptyString(username)) return null;
   if (!isNonEmptyString(password)) return null;
+  if (!isNonEmptyString(sudoPassword)) return null;
 
-  return { targetIp, sshPort, username, password };
+  return { targetIp, sshPort, username, password, sudoPassword };
 }
 
 /**
@@ -165,7 +166,8 @@ export function createHttpServer(options: HttpServerOptions): HttpServer {
         const request = parseInstallRequest(body);
         if (!request) {
           sendJson(res, 400, {
-            error: "body must include targetIp (string), sshPort (positive integer), username (string), password (string)",
+            error:
+              "body must include targetIp (string), sshPort (positive integer), username (string), password (string), sudoPassword (string)",
           });
           return;
         }

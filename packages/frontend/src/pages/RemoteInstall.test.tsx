@@ -38,6 +38,7 @@ async function fillValidForm(user: ReturnType<typeof userEvent.setup>): Promise<
   await user.type(portInput, "2222");
   await user.type(screen.getByLabelText("Username"), "  root  ");
   await user.type(screen.getByLabelText("Password"), "hunter2");
+  await user.type(screen.getByLabelText("Sudo password"), "sudosecret");
 }
 
 beforeEach(() => {
@@ -67,6 +68,7 @@ describe("RemoteInstall", () => {
     await user.type(screen.getByLabelText("Target IP"), "10.0.0.5");
     await user.type(screen.getByLabelText("Username"), "root");
     await user.type(screen.getByLabelText("Password"), "hunter2");
+    await user.type(screen.getByLabelText("Sudo password"), "sudosecret");
 
     const portInput = screen.getByLabelText("SSH port");
     const form = screen.getByRole("button", { name: "Install" }).closest("form")!;
@@ -84,6 +86,19 @@ describe("RemoteInstall", () => {
     expect(mockedPostInstall).not.toHaveBeenCalled();
   });
 
+  it("shows a validation error and does not call postInstall when the sudo password is empty", async () => {
+    const user = userEvent.setup();
+    render(<RemoteInstall />);
+
+    await user.type(screen.getByLabelText("Target IP"), "10.0.0.5");
+    await user.type(screen.getByLabelText("Username"), "root");
+    await user.type(screen.getByLabelText("Password"), "hunter2");
+    await user.click(screen.getByRole("button", { name: "Install" }));
+
+    expect(screen.getByText("Sudo password is required.")).toBeInTheDocument();
+    expect(mockedPostInstall).not.toHaveBeenCalled();
+  });
+
   it("calls postInstall with the exact trimmed values and switches to the progress view on success", async () => {
     const user = userEvent.setup();
     mockedPostInstall.mockResolvedValue({ installId: "install-1" });
@@ -97,6 +112,7 @@ describe("RemoteInstall", () => {
       sshPort: 2222,
       username: "root",
       password: "hunter2",
+      sudoPassword: "sudosecret",
     });
 
     expect(screen.getByText("Waiting for progress updates…")).toBeInTheDocument();

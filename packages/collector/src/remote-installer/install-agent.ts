@@ -41,11 +41,21 @@ async function deployAuthorizedKey(session: SshSession, publicKey: string): Prom
   }
 }
 
+// sudo -S reads exactly one line per invocation and otherwise ignores stdin
+// (a NOPASSWD sudoer never touches it at all), so supplying one password
+// line per chained "sudo -S" in the command is correct whether or not this
+// target actually needs one -- no upfront detection required.
+function sudoStdin(sudoPassword: string, command: string): string {
+  const invocations = command.split("sudo -S").length - 1;
+  return `${sudoPassword}\n`.repeat(invocations);
+}
+
 async function uploadAgent(
   session: SshSession,
   agentBinaryPath: string,
   hostId: string,
-  collectorWsUrl: string
+  collectorWsUrl: string,
+  sudoPassword: string
 ): Promise<void> {
   const stagingDir = `/tmp/labmon-install-${hostId}`;
   const mkdirResult = await session.exec(`mkdir -p ${stagingDir}`);
@@ -58,30 +68,29 @@ async function uploadAgent(
   await session.uploadFile(`${stagingDir}/labmon-agent.service`, renderSystemdUnit());
 
   // The staging dir is writable by the SSH user without sudo; moving into
-  // place under /opt and /etc is what needs privilege. -n makes sudo fail
-  // fast instead of hanging on an interactive password prompt with nothing
-  // on the other end of this exec channel to answer it (see module doc).
+  // place under /opt and /etc is what needs privilege. -p '' suppresses the
+  // "[sudo] password for x:" prompt text, which would otherwise land in
+  // stdout/stderr since this runs over a non-interactive exec channel.
   const installCmd = [
-    `sudo -n mkdir -p ${AGENT_REMOTE_DIR} ${CONFIG_REMOTE_DIR}`,
-    `sudo -n mv ${stagingDir}/agent ${AGENT_REMOTE_DIR}/agent`,
-    `sudo -n chmod 755 ${AGENT_REMOTE_DIR}/agent`,
-    `sudo -n mv ${stagingDir}/config.json ${CONFIG_REMOTE_PATH}`,
-    `sudo -n chmod 644 ${CONFIG_REMOTE_PATH}`,
-    `sudo -n mv ${stagingDir}/labmon-agent.service ${SYSTEMD_UNIT_PATH}`,
-    `sudo -n chmod 644 ${SYSTEMD_UNIT_PATH}`,
+    `sudo -S -p '' mkdir -p ${AGENT_REMOTE_DIR} ${CONFIG_REMOTE_DIR}`,
+    `sudo -S -p '' mv ${stagingDir}/agent ${AGENT_REMOTE_DIR}/agent`,
+    `sudo -S -p '' chmod 755 ${AGENT_REMOTE_DIR}/agent`,
+    `sudo -S -p '' mv ${stagingDir}/config.json ${CONFIG_REMOTE_PATH}`,
+    `sudo -S -p '' chmod 644 ${CONFIG_REMOTE_PATH}`,
+    `sudo -S -p '' mv ${stagingDir}/labmon-agent.service ${SYSTEMD_UNIT_PATH}`,
+    `sudo -S -p '' chmod 644 ${SYSTEMD_UNIT_PATH}`,
     `rmdir ${stagingDir}`,
   ].join(" && ");
 
-  const result = await session.exec(installCmd);
+  const result = await session.exec(installCmd, sudoStdin(sudoPassword, installCmd));
   if (result.code !== 0) {
     throw new Error(`failed to install agent files (exit ${result.code}): ${result.stderr || result.stdout}`);
   }
 }
 
-async function startService(session: SshSession): Promise<void> {
-  const result = await session.exec(
-    "sudo -n systemctl daemon-reload && sudo -n systemctl enable --now labmon-agent.service"
-  );
+async function startService(session: SshSession, sudoPassword: string): Promise<void> {
+  const command = "sudo -S -p '' systemctl daemon-reload && sudo -S -p '' systemctl enable --now labmon-agent.service";
+  const result = await session.exec(command, sudoStdin(sudoPassword, command));
   if (result.code !== 0) {
     throw new Error(`failed to start labmon-agent.service (exit ${result.code}): ${result.stderr || result.stdout}`);
   }
@@ -153,10 +162,10 @@ export async function runInstall(installId: string, request: InstallRequest, dep
       return;
     }
 
-    await uploadAgent(session, deps.agentBinaryPath, hostId, deps.collectorWsUrl);
+    await uploadAgent(session, deps.agentBinaryPath, hostId, deps.collectorWsUrl, request.sudoPassword);
 
     emitStage("starting_service", "Enabling and starting labmon-agent.service", { hostId });
-    await startService(session);
+    await startService(session, request.sudoPassword);
 
     emitStage("waiting_for_connection", "Waiting for the agent to connect back to the collector", { hostId });
 

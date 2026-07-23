@@ -62,10 +62,16 @@ export class SshSession {
     });
   }
 
-  exec(command: string): Promise<ExecResult> {
+  // stdin, when given, is written and the write side closed immediately --
+  // e.g. a sudo -S password (or several, one per chained sudo -S command).
+  // Commands that never read stdin at all just ignore it; ending it early
+  // doesn't affect them.
+  exec(command: string, stdin?: string): Promise<ExecResult> {
     return new Promise((resolve, reject) => {
       this.client.exec(command, (err, stream) => {
         if (err) return reject(err);
+
+        if (stdin !== undefined) stream.end(stdin);
 
         let stdout = "";
         let stderr = "";
