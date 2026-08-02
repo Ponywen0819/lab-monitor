@@ -482,3 +482,65 @@ describe("createHttpServer", () => {
     await expect(fetch(`${base}/api/hosts`)).rejects.toThrow();
   });
 });
+
+describe("createHttpServer with an IP allowlist", () => {
+  let dir: string;
+  let storage: Storage;
+  let stateMachine: OfflineStateMachine;
+  let remoteInstaller: RemoteInstaller;
+  let nasProber: NasProber;
+  let port: number;
+  let server: HttpServer;
+  let base: string;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "labmon-http-allowlist-test-"));
+    storage = createStorage(join(dir, "test.db"));
+    stateMachine = createOfflineStateMachine();
+    remoteInstaller = {} as unknown as RemoteInstaller;
+    nasProber = {} as unknown as NasProber;
+    port = await getFreePort();
+    // Explicit 127.0.0.1 (not "localhost") so the client's remote address is
+    // deterministically IPv4, regardless of the machine's DNS/getaddrinfo order.
+    base = `http://127.0.0.1:${port}`;
+  });
+
+  afterEach(() => {
+    server.stop();
+    storage.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function startServer(allowedCidrs: string[]): void {
+    server = createHttpServer({
+      port,
+      storage,
+      stateMachine,
+      remoteInstaller,
+      nasProber,
+      onHostRemoved: vi.fn(),
+      onHostUpdated: vi.fn(),
+      allowedCidrs,
+    });
+    server.start();
+  }
+
+  it("allows requests from a matching CIDR", async () => {
+    startServer(["127.0.0.1/32"]);
+    const res = await fetch(`${base}/api/hosts`);
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects requests from a non-matching CIDR with 403, before any route handling", async () => {
+    startServer(["10.0.0.0/8"]);
+    const res = await fetch(`${base}/api/hosts`);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "forbidden" });
+  });
+
+  it("rejects even an OPTIONS preflight from outside the allowlist", async () => {
+    startServer(["10.0.0.0/8"]);
+    const res = await fetch(`${base}/api/hosts`, { method: "OPTIONS" });
+    expect(res.status).toBe(403);
+  });
+});

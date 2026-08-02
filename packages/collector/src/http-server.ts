@@ -8,6 +8,7 @@ import {
   type UninstallRequest,
 } from "@labmon/shared";
 import { getHostSnapshot } from "./host-snapshot.js";
+import { isIpAllowed } from "./ip-allowlist.js";
 import type { Storage } from "./storage/db.js";
 import type { OfflineStateMachine } from "./state-machine.js";
 import type { RemoteInstaller } from "./remote-installer/index.js";
@@ -23,6 +24,8 @@ export interface HttpServerOptions {
   nasProber: NasProber;
   onHostRemoved: (hostId: string) => void;
   onHostUpdated: (hostId: string) => void;
+  /** Empty (the default) means unrestricted -- see ip-allowlist.ts. */
+  allowedCidrs?: string[];
 }
 
 export interface HttpServer {
@@ -95,13 +98,22 @@ function parseSshCredentialsRequest(body: unknown): InstallRequest | null {
 
 /**
  * Internal-network-only tool by design (see blueprint non-goals) -- no auth,
- * wide-open CORS so the frontend can be served from a different origin in dev.
+ * wide-open CORS so the frontend can be served from a different origin in
+ * dev. `allowedCidrs` (see ip-allowlist.ts) is the one optional exception:
+ * an operator can scope "internal network" down to a specific subnet.
  */
 export function createHttpServer(options: HttpServerOptions): HttpServer {
   const { port, storage, stateMachine, remoteInstaller, nasProber, onHostRemoved, onHostUpdated } = options;
+  const allowedCidrs = options.allowedCidrs ?? [];
   let server: Server | null = null;
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!isIpAllowed(req.socket.remoteAddress, allowedCidrs)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "forbidden" }));
+      return;
+    }
+
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");

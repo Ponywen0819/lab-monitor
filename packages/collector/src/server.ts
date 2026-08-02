@@ -16,6 +16,8 @@ export interface CollectorServerOptions {
   wsPort: number;
   httpPort: number;
   dbPath: string;
+  /** Restricts the HTTP API to these CIDRs; empty/omitted means unrestricted. See ip-allowlist.ts. */
+  allowedCidrs?: string[];
 }
 
 export interface CollectorServer {
@@ -112,6 +114,7 @@ export function createCollectorServer(options: CollectorServerOptions): Collecto
     remoteInstaller,
     nasProber,
     onHostRemoved,
+    allowedCidrs: options.allowedCidrs,
     onHostUpdated: (hostId) => {
       const snapshot = getHostSnapshot(hostId, storage, stateMachine);
       if (snapshot) wsServer.broadcastToFrontends({ type: "host_update", host: snapshot });
