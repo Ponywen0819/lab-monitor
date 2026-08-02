@@ -262,13 +262,13 @@ describe("WsProvider", () => {
     act(() => ws.onmessage?.({ data: JSON.stringify({ type: "install_progress", event: e1 }) }));
     await waitFor(() => expect(readInstallEvents().get("install-1")?.length).toBe(1));
 
-    const e2 = makeInstallEvent({ stage: "deploying_key", message: "key" });
+    const e2 = makeInstallEvent({ stage: "uploading_agent", message: "uploading" });
     act(() => ws.onmessage?.({ data: JSON.stringify({ type: "install_progress", event: e2 }) }));
     await waitFor(() => {
       const events = readInstallEvents().get("install-1");
       expect(events?.length).toBe(2);
       expect(events?.[0].stage).toBe("connecting");
-      expect(events?.[1].stage).toBe("deploying_key");
+      expect(events?.[1].stage).toBe("uploading_agent");
     });
   });
 
