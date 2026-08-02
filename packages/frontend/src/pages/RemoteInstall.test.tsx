@@ -136,13 +136,13 @@ describe("RemoteInstall", () => {
     expect(screen.getByText("Connecting")).toBeInTheDocument();
     expect(screen.getByText("Connecting to host")).toBeInTheDocument();
 
-    const e2 = makeInstallEvent({ stage: "deploying_key", message: "Deploying SSH key" });
+    const e2 = makeInstallEvent({ stage: "uploading_agent", message: "Uploading agent binary" });
     setInstallEvents(new Map([["install-1", [e1, e2]]]));
     rerender(<RemoteInstall />);
 
     expect(screen.getByText("Connecting to host")).toBeInTheDocument();
-    expect(screen.getByText("Deploying key")).toBeInTheDocument();
-    expect(screen.getByText("Deploying SSH key")).toBeInTheDocument();
+    expect(screen.getByText("Uploading agent")).toBeInTheDocument();
+    expect(screen.getByText("Uploading agent binary")).toBeInTheDocument();
   });
 
   it("shows a success banner and a reset button on a terminal done/success event", async () => {

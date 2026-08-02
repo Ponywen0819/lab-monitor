@@ -19,13 +19,6 @@ vi.mock("./ssh-session.js", () => ({
   SshSession: { connect: connectMock },
 }));
 
-vi.mock("./ssh-key.js", () => ({
-  ensureCollectorKeyPair: vi.fn(() => ({
-    privateKeyPath: "/fake/collector_id_ed25519",
-    publicKey: "ssh-ed25519 AAAAfakekeydata collector",
-  })),
-}));
-
 import { runInstall, type InstallAgentDeps } from "./install-agent.js";
 import { createRemoteInstaller } from "./index.js";
 
@@ -97,7 +90,6 @@ describe("runInstall", () => {
     return {
       storage,
       stateMachine,
-      sshKeyPath: "/fake/collector_id_ed25519",
       agentBinaryDir,
       collectorWsUrl: "ws://localhost:8080",
       connectTimeoutMs: 500,

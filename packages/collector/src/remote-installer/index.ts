@@ -7,9 +7,6 @@
  * ssh-session.ts for why an open exec(anyCommand) surface is a non-goal.
  *
  * Config (env vars):
- *   COLLECTOR_SSH_KEY_PATH  Where the collector's own persistent Ed25519
- *                           identity keypair lives. Generated lazily on first
- *                           use if missing. Default "./data/ssh/collector_id_ed25519".
  *   AGENT_BINARY_DIR        Local directory holding one built Agent binary per
  *                           architecture (agent-linux-x64, agent-linux-arm64);
  *                           the target's `uname -m` picks which one is
@@ -30,7 +27,6 @@ import { runInstall } from "./install-agent.js";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 
-const DEFAULT_SSH_KEY_PATH = "./data/ssh/collector_id_ed25519";
 // remote-installer/ -> src|dist -> collector -> packages, then into agent/.
 const DEFAULT_AGENT_BINARY_DIR = resolve(moduleDir, "../../../agent/dist-bin");
 const DEFAULT_COLLECTOR_WS_URL = "ws://localhost:8080";
@@ -40,7 +36,6 @@ const DEFAULT_WAIT_FOR_CONNECTION_TIMEOUT_MS = 30_000;
 export interface RemoteInstallerOptions {
   storage: Storage;
   stateMachine: OfflineStateMachine;
-  sshKeyPath?: string;
   agentBinaryDir?: string;
   collectorWsUrl?: string;
   connectTimeoutMs?: number;
@@ -61,7 +56,6 @@ export declare interface RemoteInstaller {
 export class RemoteInstaller extends EventEmitter {
   private readonly storage: Storage;
   private readonly stateMachine: OfflineStateMachine;
-  private readonly sshKeyPath: string;
   private readonly agentBinaryDir: string;
   private readonly collectorWsUrl: string;
   private readonly connectTimeoutMs: number;
@@ -71,7 +65,6 @@ export class RemoteInstaller extends EventEmitter {
     super();
     this.storage = options.storage;
     this.stateMachine = options.stateMachine;
-    this.sshKeyPath = options.sshKeyPath ?? process.env.COLLECTOR_SSH_KEY_PATH ?? DEFAULT_SSH_KEY_PATH;
     this.agentBinaryDir = options.agentBinaryDir ?? process.env.AGENT_BINARY_DIR ?? DEFAULT_AGENT_BINARY_DIR;
     this.collectorWsUrl = options.collectorWsUrl ?? process.env.COLLECTOR_WS_URL ?? DEFAULT_COLLECTOR_WS_URL;
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
@@ -90,7 +83,6 @@ export class RemoteInstaller extends EventEmitter {
     void runInstall(installId, request, {
       storage: this.storage,
       stateMachine: this.stateMachine,
-      sshKeyPath: this.sshKeyPath,
       agentBinaryDir: this.agentBinaryDir,
       collectorWsUrl: this.collectorWsUrl,
       connectTimeoutMs: this.connectTimeoutMs,
