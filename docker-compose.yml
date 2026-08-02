@@ -7,8 +7,11 @@ services:
       - "8080:8080" # WebSocket (agents + frontend)
       - "8081:8081" # HTTP API
     volumes:
-      # SQLite DB lives under here (see DB_PATH default).
-      - ./data:/app/data
+      # Bind mount (not a named volume) to a host path, so the DB survives
+      # image rebuilds/updates as long as DATA_DIR keeps pointing here --
+      # `docker compose down -v` doesn't touch it either. DB_PATH inside the
+      # container defaults to ./data/collector.db, matching this mount.
+      - ${DATA_DIR:-./data}:/app/data
     env_file:
       - .env
     restart: unless-stopped
