@@ -12,6 +12,7 @@ import type {
   DashboardSubscribeMessage,
   HostSnapshot,
   InstallProgressEvent,
+  UninstallProgressEvent,
 } from "@labmon/shared";
 import { fetchHosts } from "../api/client";
 
@@ -24,6 +25,8 @@ interface WsContextValue {
   // Keyed by installId so the Remote Install page can subscribe to just the
   // install it kicked off; events accumulate in arrival order per install.
   installEvents: Map<string, InstallProgressEvent[]>;
+  // Same idea, keyed by uninstallId, for the host-detail uninstall flow.
+  uninstallEvents: Map<string, UninstallProgressEvent[]>;
 }
 
 const WsContext = createContext<WsContextValue | null>(null);
@@ -32,6 +35,7 @@ export function WsProvider({ children }: { children: ReactNode }) {
   const [hosts, setHosts] = useState<Map<string, HostSnapshot>>(new Map());
   const [connected, setConnected] = useState(false);
   const [installEvents, setInstallEvents] = useState<Map<string, InstallProgressEvent[]>>(new Map());
+  const [uninstallEvents, setUninstallEvents] = useState<Map<string, UninstallProgressEvent[]>>(new Map());
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
@@ -140,6 +144,16 @@ export function WsProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    if (message.type === "uninstall_progress") {
+      const { uninstallId } = message.event;
+      setUninstallEvents((prev) => {
+        const next = new Map(prev);
+        next.set(uninstallId, [...(next.get(uninstallId) ?? []), message.event]);
+        return next;
+      });
+      return;
+    }
+
     if (message.type === "host_removed") {
       setHosts((prev) => {
         if (!prev.has(message.hostId)) return prev;
@@ -152,8 +166,8 @@ export function WsProvider({ children }: { children: ReactNode }) {
   }
 
   const value = useMemo<WsContextValue>(
-    () => ({ hosts, connected, installEvents }),
-    [hosts, connected, installEvents],
+    () => ({ hosts, connected, installEvents, uninstallEvents }),
+    [hosts, connected, installEvents, uninstallEvents],
   );
 
   return <WsContext.Provider value={value}>{children}</WsContext.Provider>;

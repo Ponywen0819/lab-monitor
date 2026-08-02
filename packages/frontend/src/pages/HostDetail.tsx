@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   CartesianGrid,
@@ -10,8 +10,9 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { DiskPartition, HostSnapshot, MetricSnapshot } from "@labmon/shared";
-import { deleteHost, fetchHostMetrics } from "../api/client";
+import type { DiskPartition, HostSnapshot, MetricSnapshot, UninstallStage } from "@labmon/shared";
+import { deleteHost, fetchHostMetrics, postUninstall } from "../api/client";
+import { Modal } from "../components/Modal";
 import { useHosts } from "../ws/WsProvider";
 
 interface ChartPoint {
@@ -124,13 +125,72 @@ function TimeSeriesChart({
   );
 }
 
+interface UninstallFormState {
+  targetIp: string;
+  sshPort: string;
+  username: string;
+  password: string;
+  sudoPassword: string;
+}
+
+const EMPTY_UNINSTALL_FORM: UninstallFormState = {
+  targetIp: "",
+  sshPort: "22",
+  username: "",
+  password: "",
+  sudoPassword: "",
+};
+
+const UNINSTALL_STAGE_LABEL: Record<UninstallStage, string> = {
+  connecting: "Connecting",
+  stopping_service: "Stopping service",
+  waiting_for_disconnect: "Waiting for disconnect",
+  done: "Done",
+  failed: "Failed",
+};
+
+function validateUninstallForm(form: UninstallFormState): string | null {
+  if (!form.targetIp.trim()) return "Target IP is required.";
+  if (!form.username.trim()) return "Username is required.";
+  if (!form.password) return "Password is required.";
+  const port = Number(form.sshPort);
+  if (!Number.isInteger(port) || port <= 0) return "SSH port must be a positive integer.";
+  return null;
+}
+
+/**
+ * An online agent host still has a live process on the target machine --
+ * deleting the DB row alone just lets it re-register on its next report. So
+ * removing one requires SSH credentials (used once, never persisted) to
+ * actually stop and remove the remote agent first; the DB row is only
+ * deleted once the collector confirms (via the state machine, not just SSH
+ * exit codes) that it disconnected. Non-online agents and NAS hosts (no
+ * agent process to kill) skip straight to a plain confirm+delete.
+ */
 function RemoveHostButton({ host }: { host: HostSnapshot }) {
   const navigate = useNavigate();
+  const { uninstallEvents } = useHosts();
+  const needsSsh = host.type === "agent" && host.status === "online";
+
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
-  const isOnline = host.status === "online";
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState<UninstallFormState>(EMPTY_UNINSTALL_FORM);
+  const [uninstallId, setUninstallId] = useState<string | null>(null);
+
+  const events = uninstallId ? (uninstallEvents.get(uninstallId) ?? []) : [];
+  const terminalEvent = events.find((e) => e.stage === "done" || e.stage === "failed") ?? null;
+  const succeeded = terminalEvent?.success === true;
+
+  function updateField(field: keyof UninstallFormState, value: string): void {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  }
 
   function handleClick(): void {
+    if (needsSsh) {
+      setShowForm(true);
+      return;
+    }
     if (!window.confirm(`Remove "${host.name}"? This also deletes its recorded metric history.`)) return;
     setError(null);
     setRemoving(true);
@@ -142,17 +202,139 @@ function RemoveHostButton({ host }: { host: HostSnapshot }) {
       });
   }
 
+  function handleModalClose(): void {
+    setShowForm(false);
+    setUninstallId(null);
+    setForm(EMPTY_UNINSTALL_FORM);
+    setError(null);
+  }
+
+  async function handleUninstallSubmit(e: FormEvent): Promise<void> {
+    e.preventDefault();
+    const validationError = validateUninstallForm(form);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    setError(null);
+    setRemoving(true);
+    try {
+      const { uninstallId: newUninstallId } = await postUninstall(host.id, {
+        targetIp: form.targetIp.trim(),
+        sshPort: Number(form.sshPort),
+        username: form.username.trim(),
+        password: form.password,
+        sudoPassword: form.sudoPassword || form.password,
+      });
+      setUninstallId(newUninstallId);
+    } catch (err) {
+      setError(String(err));
+      setRemoving(false);
+    }
+  }
+
+  const modalOpen = showForm || uninstallId !== null;
+  // Closing mid-flight would just hide the progress log, not cancel the SSH
+  // session -- disabled so that can't happen by accident. Once it succeeds
+  // the host record is already gone, so any way of dismissing the modal
+  // (X, Escape, backdrop, or the explicit button) just goes to the dashboard.
+  const onModalClose = succeeded ? () => navigate("/") : !removing ? handleModalClose : null;
+
   return (
     <div className="remove-host">
-      <button
-        className="danger-button"
-        disabled={isOnline || removing}
-        title={isOnline ? "Host is online -- wait for it to go offline before removing" : undefined}
-        onClick={handleClick}
-      >
+      <button className="danger-button" disabled={removing} onClick={handleClick}>
         {removing ? "Removing…" : "Remove host"}
       </button>
-      {error && <p className="error-text">Failed to remove host: {error}</p>}
+      {!modalOpen && error && <p className="error-text">Failed to remove host: {error}</p>}
+
+      {modalOpen && (
+        <Modal title={`Uninstall agent on "${host.name}"`} onClose={onModalClose}>
+          {uninstallId ? (
+            <>
+              <ol className="install-log">
+                {events.map((event, i) => (
+                  <li key={i} className="install-log-entry">
+                    <span className="install-log-stage">{UNINSTALL_STAGE_LABEL[event.stage]}</span>
+                    <span className="install-log-message">{event.message}</span>
+                  </li>
+                ))}
+                {events.length === 0 && <li className="empty-state">Waiting for progress updates…</li>}
+              </ol>
+              {terminalEvent && !succeeded && (
+                <p className="install-result-fail">Uninstall failed: {terminalEvent.message}</p>
+              )}
+              {succeeded && (
+                <>
+                  <p className="install-result-ok">Agent uninstalled and host removed.</p>
+                  <button type="button" onClick={() => navigate("/")}>
+                    Continue to dashboard
+                  </button>
+                </>
+              )}
+            </>
+          ) : (
+            <form className="settings-form" noValidate onSubmit={(e) => void handleUninstallSubmit(e)}>
+              <p className="modal-description">
+                This host still has a live agent. Enter its SSH login once to stop and remove the agent before
+                deleting the record.
+              </p>
+              <label>
+                Target IP
+                <input
+                  type="text"
+                  value={form.targetIp}
+                  onChange={(e) => updateField("targetIp", e.target.value)}
+                  placeholder="192.168.1.50"
+                />
+              </label>
+              <label>
+                SSH port
+                <input
+                  type="number"
+                  min={1}
+                  value={form.sshPort}
+                  onChange={(e) => updateField("sshPort", e.target.value)}
+                />
+              </label>
+              <label>
+                Username
+                <input
+                  type="text"
+                  value={form.username}
+                  onChange={(e) => updateField("username", e.target.value)}
+                />
+              </label>
+              <label>
+                Password
+                <input
+                  type="password"
+                  value={form.password}
+                  onChange={(e) => updateField("password", e.target.value)}
+                />
+              </label>
+              <label>
+                Sudo password (optional, defaults to Password)
+                <input
+                  type="password"
+                  value={form.sudoPassword}
+                  onChange={(e) => updateField("sudoPassword", e.target.value)}
+                />
+              </label>
+
+              {error && <p className="error-text">{error}</p>}
+
+              <div className="remove-host-form-actions">
+                <button type="submit" className="danger-button" disabled={removing}>
+                  {removing ? "Uninstalling…" : "Uninstall & remove"}
+                </button>
+                <button type="button" onClick={handleModalClose} disabled={removing}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }
@@ -161,6 +343,16 @@ export function HostDetail() {
   const { id } = useParams<{ id: string }>();
   const { hosts } = useHosts();
   const host = id ? hosts.get(id) : undefined;
+
+  // Once the uninstall flow finishes, the collector deletes the DB row and
+  // broadcasts host_removed *before* the modal's own "done" progress event
+  // arrives, so `host` can go from defined to undefined mid-flow. Keeping the
+  // last snapshot around (rather than conditioning RemoveHostButton on the
+  // live `host`) means the modal stays mounted and finishes showing its own
+  // success/failure message instead of vanishing out from under the user.
+  const lastKnownHostRef = useRef<HostSnapshot | null>(null);
+  if (host) lastKnownHostRef.current = host;
+  const removeButtonHost = host ?? lastKnownHostRef.current;
 
   const [snapshots, setSnapshots] = useState<MetricSnapshot[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -206,11 +398,14 @@ export function HostDetail() {
         <Link to="/">&larr; back to dashboard</Link>
       </p>
       <div className="page-header">
-        <h2>{host?.name ?? id}</h2>
-        {host && <RemoveHostButton host={host} />}
+        <h2>{host?.name ?? (lastKnownHostRef.current ? "Unknown host" : id)}</h2>
+        {removeButtonHost && <RemoveHostButton host={removeButtonHost} />}
       </div>
 
-      {!host && <p className="empty-state">Loading host…</p>}
+      {!host && !lastKnownHostRef.current && <p className="empty-state">Loading host…</p>}
+      {!host && lastKnownHostRef.current && (
+        <p className="empty-state">This host no longer exists.</p>
+      )}
 
       {host?.type === "nas" && <p className="empty-state">No metrics available for NAS hosts.</p>}
 

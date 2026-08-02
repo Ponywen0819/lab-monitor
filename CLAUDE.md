@@ -43,9 +43,11 @@ npx vitest run path/to/some.test.ts --workspace=packages/collector   # 只跑單
 
 **遠端安裝器**（`collector/src/remote-installer/`）會 SSH 進目標主機，也跑一次 `hostname` 當作 dashboard 上顯示的主機名稱（純粹是好看，跟 `uname -m` 判斷架構是分開的兩次 exec；抓不到時退回用 `targetIp`，不會讓整個安裝失敗），再跑 `uname -m` 判斷目標架構（`x86_64` → `agent-linux-x64`、`aarch64`/`arm64` → `agent-linux-arm64`，其他架構直接失敗），選對的 agent 執行檔跟產生好的 systemd unit 上傳到 SSH 使用者可寫入的暫存目錄，再用 `sudo -S`（從 SSH exec channel 的 stdin 讀密碼）把檔案搬進 `/opt/labmon-agent` 與 `/etc/labmon-agent` 並啟用服務。安裝表單的 `sudoPassword` 欄位是選填，前端留白時直接用 SSH 密碼頂替（兩者相同是常見情況），送到後端的 `InstallRequest.sudoPassword` 一律是非空字串。不會嘗試先用免密碼 sudo、失敗才問——`sudo -S` 對已設好 NOPASSWD 的機器一樣能跑（它根本不會去讀 stdin），所以不用在流程中途暫停詢問密碼。密碼只在記憶體中用一次、不落地，跟 SSH 密碼的處理方式一致；`SshSession.exec()` 支援傳入 stdin 字串，內容是依指令鏈裡 `sudo -S` 出現次數重複的密碼行。安裝成功與否是看 agent 是否真的在時限內透過 WS 連回來，而不是只看 SSH 指令的 exit code——就算每一步 SSH 指令都成功，只要 agent 沒有回連，仍會回報安裝失敗。
 
+**刪除 host 與遠端解除安裝**（`collector/src/remote-installer/uninstall-agent.ts`）：`DELETE /api/hosts/:id` 對「還在 online 的 agent host」一律回 409——它在目標主機上仍有活著的 process，只刪 DB row 的話，agent 下一次回報又會把自己重新註冊回來。NAS host 沒有這個問題（沒有 agent process 可言），online 狀態不擋刪除。真的要移除一台 online 的 agent，前端會走 `POST /api/hosts/:id/uninstall`，跟安裝一樣要求使用者輸入一次 SSH 帳密（`UninstallRequest`，與 `InstallRequest` 同形狀），SSH 進去跑 `systemctl disable --now` 加上砍掉 `/opt/labmon-agent`、`/etc/labmon-agent`、systemd unit 檔，成功與否一樣不是看 SSH exit code，而是等狀態機真的觀察到該 host 離開 `online`（`signalDown` 一斷線就同步 emit，不用等 30 秒緩衝）才刪 DB row、呼叫 `onHostRemoved`——順序反過來（先刪 DB 才 SSH，或 SSH 沒回應就刪 DB）會讓 agent 下次報告時借屍還魂。這個回調（`nasProber.removeHost` + 廣播 `host_removed`）現在是 `server.ts` 建構時就決定好、同時傳給 `createHttpServer`（給 DELETE 用）跟 `createRemoteInstaller`（給 uninstallAgent 完成時用），確保兩條路徑做的清理是同一份邏輯，不會各自長出一套。
+
 **儲存層**（`collector/src/storage/`，用 better-sqlite3）：`host`、`metric_snapshot`（高流量資料，超過 `METRIC_RETENTION_MS` 後由定期清理任務刪除）、`status_event`（永久保留的離線歷史稽核紀錄，不會被清理）、`system_config`（key/value，目前只存通知信箱）、`nas_host`（`id`/`name`/`ip`，`id` 對應 `host.id`；`deleteHost()` 會把兩張表的列一起刪掉，避免兩邊資料drift）。
 
-**HTTP API**（`collector/src/http-server.ts`）：`GET /api/hosts`、`GET /api/hosts/:id/metrics`、`DELETE /api/hosts/:id`、`GET|POST /api/nas-hosts`、`GET|PUT /api/config`、`POST /api/install`。沒有用任何路由框架，是手動比對路徑片段。
+**HTTP API**（`collector/src/http-server.ts`）：`GET /api/hosts`、`GET /api/hosts/:id/metrics`、`DELETE /api/hosts/:id`（online 的 agent host 回 409）、`POST /api/hosts/:id/uninstall`（online agent host 專用，見上）、`GET|POST /api/nas-hosts`、`GET|PUT /api/config`、`POST /api/install`。沒有用任何路由框架，是手動比對路徑片段。
 
 # 環境變數
 
@@ -54,6 +56,7 @@ npx vitest run path/to/some.test.ts --workspace=packages/collector   # 只跑單
 - `COLLECTOR_WS_URL`——必須填 collector 主機真實的區網 IP，不能是 `localhost`。這個值會被寫進每一台新安裝 agent 的設定檔，讓它知道要回連到哪裡。
 - `VITE_HTTP_BASE_URL` / `VITE_WS_URL`——在 *build time* 就烤進前端的靜態檔案，Docker build 完之後再改 `.env` 不會生效，要重新 build 才會反映。
 - 沒設定 `SMTP_USER`/`SMTP_APP_PASSWORD` 只會讓對應子模組印一行 log 並自我停用，不會噴錯——本機開發時這是正常狀況。NAS 主機清單不在這裡設定，見上面「架構」一節。
+- `ALLOWED_CIDRS`——逗號分隔的 CIDR 清單（見 `collector/src/ip-allowlist.ts`），只限制 HTTP API（`http-server.ts` 在其他任何路由邏輯之前，先用 `req.socket.remoteAddress` 擋一次，不合格直接 403），WS（agent 回報、前端 dashboard 推播）不受影響。未設定就是完全不限制，維持原本「內部網路工具、無認證」的預設。
 
 # Docker 部署
 

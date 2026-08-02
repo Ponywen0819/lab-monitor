@@ -293,6 +293,7 @@ describe("RemoteInstaller.installAgent", () => {
     const remoteInstaller = createRemoteInstaller({
       storage,
       stateMachine,
+      onHostRemoved: vi.fn(),
       agentBinaryDir,
       connectTimeoutMs: 50,
       waitForConnectionTimeoutMs: 50,

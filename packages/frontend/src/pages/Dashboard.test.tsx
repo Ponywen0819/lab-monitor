@@ -33,7 +33,7 @@ function makeHost(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
 
 function setHosts(hosts: HostSnapshot[], connected = true): void {
   const map = new Map(hosts.map((h) => [h.id, h]));
-  mockedUseHosts.mockReturnValue({ hosts: map, connected, installEvents: new Map() });
+  mockedUseHosts.mockReturnValue({ hosts: map, connected, installEvents: new Map(), uninstallEvents: new Map() });
 }
 
 let navigateSpy: ReturnType<typeof vi.fn>;
@@ -124,6 +124,28 @@ describe("Dashboard", () => {
 
     const names = [...document.querySelectorAll(".host-name")].map((el) => el.textContent);
     expect(names).toEqual(["Alice", "Bob", "Charlie"]);
+  });
+
+  it("splits agent hosts and NAS hosts into separate sections", () => {
+    setHosts([
+      makeHost({ id: "agent-1", name: "Agent Box", type: "agent" }),
+      makeHost({ id: "nas-1", name: "Storage Box", type: "nas" }),
+    ]);
+    renderDashboard();
+
+    const sections = document.querySelectorAll(".host-section");
+    expect(sections).toHaveLength(2);
+    expect(sections[0].querySelector("h3")?.textContent).toBe("Hosts");
+    expect(sections[0].textContent).toContain("Agent Box");
+    expect(sections[1].querySelector("h3")?.textContent).toBe("NAS");
+    expect(sections[1].textContent).toContain("Storage Box");
+  });
+
+  it("shows a section-specific empty state when one type has no hosts", () => {
+    setHosts([makeHost({ id: "agent-1", name: "Agent Box", type: "agent" })]);
+    renderDashboard();
+
+    expect(screen.getByText("No NAS hosts added yet.")).toBeInTheDocument();
   });
 
   it("navigates to the host detail page when a host card is clicked", async () => {

@@ -16,6 +16,8 @@ export interface CollectorServerOptions {
   wsPort: number;
   httpPort: number;
   dbPath: string;
+  /** Restricts the HTTP API to these CIDRs; empty/omitted means unrestricted. See ip-allowlist.ts. */
+  allowedCidrs?: string[];
 }
 
 export interface CollectorServer {
@@ -87,10 +89,22 @@ export function createCollectorServer(options: CollectorServerOptions): Collecto
 
   const nasProber = createNasProber({ stateMachine, storage });
   const emailNotifier = createEmailNotifier({ stateMachine, storage });
-  const remoteInstaller = createRemoteInstaller({ storage, stateMachine });
+
+  // Shared by the plain DELETE endpoint and by uninstallAgent() once its SSH
+  // flow confirms the agent actually disconnected -- both need the exact
+  // same nasProber/broadcast cleanup after the DB row is gone.
+  const onHostRemoved = (hostId: string): void => {
+    nasProber.removeHost(hostId);
+    wsServer.broadcastToFrontends({ type: "host_removed", hostId });
+  };
+
+  const remoteInstaller = createRemoteInstaller({ storage, stateMachine, onHostRemoved });
 
   remoteInstaller.on("progress", (event) => {
     wsServer.broadcastToFrontends({ type: "install_progress", event });
+  });
+  remoteInstaller.on("uninstallProgress", (event) => {
+    wsServer.broadcastToFrontends({ type: "uninstall_progress", event });
   });
 
   const httpServer = createHttpServer({
@@ -99,10 +113,8 @@ export function createCollectorServer(options: CollectorServerOptions): Collecto
     stateMachine,
     remoteInstaller,
     nasProber,
-    onHostRemoved: (hostId) => {
-      nasProber.removeHost(hostId);
-      wsServer.broadcastToFrontends({ type: "host_removed", hostId });
-    },
+    onHostRemoved,
+    allowedCidrs: options.allowedCidrs,
     onHostUpdated: (hostId) => {
       const snapshot = getHostSnapshot(hostId, storage, stateMachine);
       if (snapshot) wsServer.broadcastToFrontends({ type: "host_update", host: snapshot });

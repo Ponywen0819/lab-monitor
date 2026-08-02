@@ -115,6 +115,18 @@ body {
   color: var(--status-notified);
 }
 
+.host-section + .host-section {
+  margin-top: 2rem;
+}
+
+.host-section h3 {
+  margin: 0 0 0.75rem;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .host-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -314,6 +326,24 @@ body {
   font-size: 0.85rem;
 }
 
+.remove-host-form-actions {
+  display: flex;
+  gap: 0.6rem;
+}
+
+/* ".settings-form button" otherwise outranks ".danger-button" here (two
+   classes + tag beats one class), so it'd repaint this button as a plain
+   one -- these two rules restore the danger styling at matching specificity. */
+.settings-form button.danger-button {
+  border-color: var(--status-notified);
+  color: var(--status-notified);
+}
+
+.settings-form button.danger-button:hover:not(:disabled) {
+  background: var(--status-notified);
+  color: #fff;
+}
+
 .danger-button {
   font: inherit;
   background: var(--card-bg);
@@ -371,4 +401,64 @@ body {
 .install-result-fail {
   color: var(--status-notified);
   font-weight: 600;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 100;
+}
+
+.modal-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem;
+  width: 100%;
+  max-width: 420px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+}
+
+.modal-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.modal-header h3 {
+  margin: 0;
+}
+
+.modal-close {
+  font: inherit;
+  font-size: 1.2rem;
+  line-height: 1;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+}
+
+.modal-close:hover {
+  color: var(--text);
+}
+
+.modal-description {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  margin: 0 0 0.9rem;
+}
+
+.modal-card .settings-form {
+  max-width: none;
 }

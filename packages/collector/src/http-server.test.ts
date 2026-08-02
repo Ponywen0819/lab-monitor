@@ -38,6 +38,7 @@ describe("createHttpServer", () => {
   let storage: Storage;
   let stateMachine: OfflineStateMachine;
   let installAgentMock: ReturnType<typeof vi.fn>;
+  let uninstallAgentMock: ReturnType<typeof vi.fn>;
   let remoteInstaller: RemoteInstaller;
   let addNasHostMock: ReturnType<typeof vi.fn>;
   let removeNasHostMock: ReturnType<typeof vi.fn>;
@@ -53,7 +54,11 @@ describe("createHttpServer", () => {
     storage = createStorage(join(dir, "test.db"));
     stateMachine = createOfflineStateMachine();
     installAgentMock = vi.fn((_request: InstallRequest) => "install-id");
-    remoteInstaller = { installAgent: installAgentMock } as unknown as RemoteInstaller;
+    uninstallAgentMock = vi.fn((_hostId: string, _request: InstallRequest) => "uninstall-id");
+    remoteInstaller = {
+      installAgent: installAgentMock,
+      uninstallAgent: uninstallAgentMock,
+    } as unknown as RemoteInstaller;
     addNasHostMock = vi.fn();
     removeNasHostMock = vi.fn();
     nasProber = { addHost: addNasHostMock, removeHost: removeNasHostMock } as unknown as NasProber;
@@ -157,7 +162,7 @@ describe("createHttpServer", () => {
       expect(onHostRemovedMock).not.toHaveBeenCalled();
     });
 
-    it("returns 409 and does not delete when the host is online", async () => {
+    it("returns 409 and does not delete when an agent host is currently online", async () => {
       storage.upsertHost({ id: "h1", name: "Host One", type: "agent" });
       stateMachine.signalUp("h1");
 
@@ -166,6 +171,17 @@ describe("createHttpServer", () => {
       expect(res.status).toBe(409);
       expect(storage.getHost("h1")).toBeDefined();
       expect(onHostRemovedMock).not.toHaveBeenCalled();
+    });
+
+    it("deletes a NAS host even while it is currently online (no agent to leave behind)", async () => {
+      storage.addNasHost({ id: "nas-1", name: "Synology", ip: "10.0.0.5" });
+      stateMachine.signalUp("nas-1");
+
+      const res = await fetch(`${base}/api/hosts/nas-1`, { method: "DELETE" });
+
+      expect(res.status).toBe(200);
+      expect(storage.getHost("nas-1")).toBeUndefined();
+      expect(onHostRemovedMock).toHaveBeenCalledWith("nas-1");
     });
 
     it("deletes a non-online host, its metrics/status history, and notifies onHostRemoved", async () => {
@@ -193,6 +209,67 @@ describe("createHttpServer", () => {
 
       stateMachine.signalUp("h1");
       expect(stateMachine.getHostState("h1")?.status).toBe("online");
+    });
+  });
+
+  describe("POST /api/hosts/:id/uninstall", () => {
+    const credentials = {
+      targetIp: "192.168.1.50",
+      sshPort: 22,
+      username: "ubuntu",
+      password: "hunter2",
+      sudoPassword: "sudosecret",
+    };
+
+    it("returns 404 for an unknown host", async () => {
+      const res = await fetch(`${base}/api/hosts/nope/uninstall`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify(credentials),
+      });
+      expect(res.status).toBe(404);
+      expect(uninstallAgentMock).not.toHaveBeenCalled();
+    });
+
+    it("returns 400 for a NAS host (nothing to uninstall)", async () => {
+      storage.addNasHost({ id: "nas-1", name: "Synology", ip: "10.0.0.5" });
+
+      const res = await fetch(`${base}/api/hosts/nas-1/uninstall`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify(credentials),
+      });
+
+      expect(res.status).toBe(400);
+      expect(uninstallAgentMock).not.toHaveBeenCalled();
+    });
+
+    it("returns 400 when the body is missing required SSH credential fields", async () => {
+      storage.upsertHost({ id: "h1", name: "Host One", type: "agent" });
+
+      const res = await fetch(`${base}/api/hosts/h1/uninstall`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ targetIp: "192.168.1.50" }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(uninstallAgentMock).not.toHaveBeenCalled();
+    });
+
+    it("starts the uninstall flow and returns its id, for an online agent host", async () => {
+      storage.upsertHost({ id: "h1", name: "Host One", type: "agent" });
+      stateMachine.signalUp("h1");
+
+      const res = await fetch(`${base}/api/hosts/h1/uninstall`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify(credentials),
+      });
+
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ uninstallId: "uninstall-id" });
+      expect(uninstallAgentMock).toHaveBeenCalledWith("h1", credentials);
     });
   });
 
@@ -403,5 +480,67 @@ describe("createHttpServer", () => {
   it("stop() closes the listener so a subsequent request fails", async () => {
     server.stop();
     await expect(fetch(`${base}/api/hosts`)).rejects.toThrow();
+  });
+});
+
+describe("createHttpServer with an IP allowlist", () => {
+  let dir: string;
+  let storage: Storage;
+  let stateMachine: OfflineStateMachine;
+  let remoteInstaller: RemoteInstaller;
+  let nasProber: NasProber;
+  let port: number;
+  let server: HttpServer;
+  let base: string;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "labmon-http-allowlist-test-"));
+    storage = createStorage(join(dir, "test.db"));
+    stateMachine = createOfflineStateMachine();
+    remoteInstaller = {} as unknown as RemoteInstaller;
+    nasProber = {} as unknown as NasProber;
+    port = await getFreePort();
+    // Explicit 127.0.0.1 (not "localhost") so the client's remote address is
+    // deterministically IPv4, regardless of the machine's DNS/getaddrinfo order.
+    base = `http://127.0.0.1:${port}`;
+  });
+
+  afterEach(() => {
+    server.stop();
+    storage.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function startServer(allowedCidrs: string[]): void {
+    server = createHttpServer({
+      port,
+      storage,
+      stateMachine,
+      remoteInstaller,
+      nasProber,
+      onHostRemoved: vi.fn(),
+      onHostUpdated: vi.fn(),
+      allowedCidrs,
+    });
+    server.start();
+  }
+
+  it("allows requests from a matching CIDR", async () => {
+    startServer(["127.0.0.1/32"]);
+    const res = await fetch(`${base}/api/hosts`);
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects requests from a non-matching CIDR with 403, before any route handling", async () => {
+    startServer(["10.0.0.0/8"]);
+    const res = await fetch(`${base}/api/hosts`);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "forbidden" });
+  });
+
+  it("rejects even an OPTIONS preflight from outside the allowlist", async () => {
+    startServer(["10.0.0.0/8"]);
+    const res = await fetch(`${base}/api/hosts`, { method: "OPTIONS" });
+    expect(res.status).toBe(403);
   });
 });
