@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   CartesianGrid,
@@ -180,10 +180,7 @@ function RemoveHostButton({ host }: { host: HostSnapshot }) {
 
   const events = uninstallId ? (uninstallEvents.get(uninstallId) ?? []) : [];
   const terminalEvent = events.find((e) => e.stage === "done" || e.stage === "failed") ?? null;
-
-  useEffect(() => {
-    if (terminalEvent?.success) navigate("/");
-  }, [terminalEvent, navigate]);
+  const succeeded = terminalEvent?.success === true;
 
   function updateField(field: keyof UninstallFormState, value: string): void {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -238,8 +235,10 @@ function RemoveHostButton({ host }: { host: HostSnapshot }) {
 
   const modalOpen = showForm || uninstallId !== null;
   // Closing mid-flight would just hide the progress log, not cancel the SSH
-  // session -- disabled so that can't happen by accident.
-  const canClose = !removing;
+  // session -- disabled so that can't happen by accident. Once it succeeds
+  // the host record is already gone, so any way of dismissing the modal
+  // (X, Escape, backdrop, or the explicit button) just goes to the dashboard.
+  const onModalClose = succeeded ? () => navigate("/") : !removing ? handleModalClose : null;
 
   return (
     <div className="remove-host">
@@ -249,7 +248,7 @@ function RemoveHostButton({ host }: { host: HostSnapshot }) {
       {!modalOpen && error && <p className="error-text">Failed to remove host: {error}</p>}
 
       {modalOpen && (
-        <Modal title={`Uninstall agent on "${host.name}"`} onClose={canClose ? handleModalClose : null}>
+        <Modal title={`Uninstall agent on "${host.name}"`} onClose={onModalClose}>
           {uninstallId ? (
             <>
               <ol className="install-log">
@@ -261,8 +260,16 @@ function RemoveHostButton({ host }: { host: HostSnapshot }) {
                 ))}
                 {events.length === 0 && <li className="empty-state">Waiting for progress updates…</li>}
               </ol>
-              {terminalEvent && !terminalEvent.success && (
+              {terminalEvent && !succeeded && (
                 <p className="install-result-fail">Uninstall failed: {terminalEvent.message}</p>
+              )}
+              {succeeded && (
+                <>
+                  <p className="install-result-ok">Agent uninstalled and host removed.</p>
+                  <button type="button" onClick={() => navigate("/")}>
+                    Continue to dashboard
+                  </button>
+                </>
               )}
             </>
           ) : (
@@ -337,6 +344,16 @@ export function HostDetail() {
   const { hosts } = useHosts();
   const host = id ? hosts.get(id) : undefined;
 
+  // Once the uninstall flow finishes, the collector deletes the DB row and
+  // broadcasts host_removed *before* the modal's own "done" progress event
+  // arrives, so `host` can go from defined to undefined mid-flow. Keeping the
+  // last snapshot around (rather than conditioning RemoveHostButton on the
+  // live `host`) means the modal stays mounted and finishes showing its own
+  // success/failure message instead of vanishing out from under the user.
+  const lastKnownHostRef = useRef<HostSnapshot | null>(null);
+  if (host) lastKnownHostRef.current = host;
+  const removeButtonHost = host ?? lastKnownHostRef.current;
+
   const [snapshots, setSnapshots] = useState<MetricSnapshot[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -381,11 +398,14 @@ export function HostDetail() {
         <Link to="/">&larr; back to dashboard</Link>
       </p>
       <div className="page-header">
-        <h2>{host?.name ?? id}</h2>
-        {host && <RemoveHostButton host={host} />}
+        <h2>{host?.name ?? (lastKnownHostRef.current ? "Unknown host" : id)}</h2>
+        {removeButtonHost && <RemoveHostButton host={removeButtonHost} />}
       </div>
 
-      {!host && <p className="empty-state">Loading host…</p>}
+      {!host && !lastKnownHostRef.current && <p className="empty-state">Loading host…</p>}
+      {!host && lastKnownHostRef.current && (
+        <p className="empty-state">This host no longer exists.</p>
+      )}
 
       {host?.type === "nas" && <p className="empty-state">No metrics available for NAS hosts.</p>}
 

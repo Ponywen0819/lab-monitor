@@ -198,7 +198,7 @@ describe("HostDetail remove button - online agent host (SSH uninstall flow)", ()
     );
   });
 
-  it("renders progress events and navigates home once a terminal success event arrives", async () => {
+  it("keeps the modal open (and shows a not-found page behind it) if the host disappears mid-flow, then waits for the user to confirm before navigating", async () => {
     const user = userEvent.setup();
     mockedPostUninstall.mockResolvedValue({ uninstallId: "uninstall-1" });
     setHost(makeHost({ id: "h1", status: "online" }));
@@ -227,6 +227,21 @@ describe("HostDetail remove button - online agent host (SSH uninstall flow)", ()
 
     expect(screen.getByText("Connecting to 10.0.0.9")).toBeInTheDocument();
 
+    // Simulates the host_removed broadcast arriving before the "done"
+    // progress event -- the host vanishes from the WS-driven map mid-flow.
+    // The modal (and its progress log) must survive this, not unmount.
+    mockedUseHosts.mockReturnValue({ hosts: new Map(), connected: true, installEvents: new Map(), uninstallEvents });
+    rerender(
+      <MemoryRouter>
+        <HostDetail />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Unknown host")).toBeInTheDocument();
+    expect(screen.getByText("This host no longer exists.")).toBeInTheDocument();
+    expect(screen.getByText("Connecting to 10.0.0.9")).toBeInTheDocument();
+    expect(navigateSpy).not.toHaveBeenCalled();
+
     uninstallEvents = new Map([
       [
         "uninstall-1",
@@ -243,13 +258,18 @@ describe("HostDetail remove button - online agent host (SSH uninstall flow)", ()
         ],
       ],
     ]);
-    setHost(makeHost({ id: "h1", status: "online" }));
+    mockedUseHosts.mockReturnValue({ hosts: new Map(), connected: true, installEvents: new Map(), uninstallEvents });
     rerender(
       <MemoryRouter>
         <HostDetail />
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(navigateSpy).toHaveBeenCalledWith("/"));
+    expect(screen.getByText("Agent uninstalled and host removed.")).toBeInTheDocument();
+    expect(navigateSpy).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Continue to dashboard" }));
+
+    expect(navigateSpy).toHaveBeenCalledWith("/");
   });
 });
