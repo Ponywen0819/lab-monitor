@@ -39,6 +39,12 @@ RUN npm run build --workspace=packages/shared \
 FROM node:20-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production
+# nas-prober.ts shells out to the system `ping` (see its comment on why: no
+# assumption of CAP_NET_RAW for a raw-socket ICMP lib) -- bookworm-slim
+# doesn't ship it, so NAS hosts would silently read as always-down otherwise.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends iputils-ping \
+ && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/packages/shared packages/shared
