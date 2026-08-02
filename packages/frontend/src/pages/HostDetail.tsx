@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import type { DiskPartition, HostSnapshot, MetricSnapshot, UninstallStage } from "@labmon/shared";
 import { deleteHost, fetchHostMetrics, postUninstall } from "../api/client";
+import { Modal } from "../components/Modal";
 import { useHosts } from "../ws/WsProvider";
 
 interface ChartPoint {
@@ -204,6 +205,13 @@ function RemoveHostButton({ host }: { host: HostSnapshot }) {
       });
   }
 
+  function handleModalClose(): void {
+    setShowForm(false);
+    setUninstallId(null);
+    setForm(EMPTY_UNINSTALL_FORM);
+    setError(null);
+  }
+
   async function handleUninstallSubmit(e: FormEvent): Promise<void> {
     e.preventDefault();
     const validationError = validateUninstallForm(form);
@@ -228,87 +236,98 @@ function RemoveHostButton({ host }: { host: HostSnapshot }) {
     }
   }
 
-  if (uninstallId) {
-    return (
-      <div className="remove-host">
-        <ol className="install-log">
-          {events.map((event, i) => (
-            <li key={i} className="install-log-entry">
-              <span className="install-log-stage">{UNINSTALL_STAGE_LABEL[event.stage]}</span>
-              <span className="install-log-message">{event.message}</span>
-            </li>
-          ))}
-          {events.length === 0 && <li className="empty-state">Waiting for progress updates…</li>}
-        </ol>
-        {terminalEvent && !terminalEvent.success && (
-          <p className="install-result-fail">Uninstall failed: {terminalEvent.message}</p>
-        )}
-      </div>
-    );
-  }
-
-  if (showForm) {
-    return (
-      <form className="settings-form" noValidate onSubmit={(e) => void handleUninstallSubmit(e)}>
-        <label>
-          Target IP
-          <input
-            type="text"
-            value={form.targetIp}
-            onChange={(e) => updateField("targetIp", e.target.value)}
-            placeholder="192.168.1.50"
-          />
-        </label>
-        <label>
-          SSH port
-          <input
-            type="number"
-            min={1}
-            value={form.sshPort}
-            onChange={(e) => updateField("sshPort", e.target.value)}
-          />
-        </label>
-        <label>
-          Username
-          <input type="text" value={form.username} onChange={(e) => updateField("username", e.target.value)} />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            value={form.password}
-            onChange={(e) => updateField("password", e.target.value)}
-          />
-        </label>
-        <label>
-          Sudo password (optional, defaults to Password)
-          <input
-            type="password"
-            value={form.sudoPassword}
-            onChange={(e) => updateField("sudoPassword", e.target.value)}
-          />
-        </label>
-
-        {error && <p className="error-text">{error}</p>}
-
-        <div className="remove-host-form-actions">
-          <button type="submit" className="danger-button" disabled={removing}>
-            {removing ? "Uninstalling…" : "Uninstall & remove"}
-          </button>
-          <button type="button" onClick={() => setShowForm(false)} disabled={removing}>
-            Cancel
-          </button>
-        </div>
-      </form>
-    );
-  }
+  const modalOpen = showForm || uninstallId !== null;
+  // Closing mid-flight would just hide the progress log, not cancel the SSH
+  // session -- disabled so that can't happen by accident.
+  const canClose = !removing;
 
   return (
     <div className="remove-host">
       <button className="danger-button" disabled={removing} onClick={handleClick}>
         {removing ? "Removing…" : "Remove host"}
       </button>
-      {error && <p className="error-text">Failed to remove host: {error}</p>}
+      {!modalOpen && error && <p className="error-text">Failed to remove host: {error}</p>}
+
+      {modalOpen && (
+        <Modal title={`Uninstall agent on "${host.name}"`} onClose={canClose ? handleModalClose : null}>
+          {uninstallId ? (
+            <>
+              <ol className="install-log">
+                {events.map((event, i) => (
+                  <li key={i} className="install-log-entry">
+                    <span className="install-log-stage">{UNINSTALL_STAGE_LABEL[event.stage]}</span>
+                    <span className="install-log-message">{event.message}</span>
+                  </li>
+                ))}
+                {events.length === 0 && <li className="empty-state">Waiting for progress updates…</li>}
+              </ol>
+              {terminalEvent && !terminalEvent.success && (
+                <p className="install-result-fail">Uninstall failed: {terminalEvent.message}</p>
+              )}
+            </>
+          ) : (
+            <form className="settings-form" noValidate onSubmit={(e) => void handleUninstallSubmit(e)}>
+              <p className="modal-description">
+                This host still has a live agent. Enter its SSH login once to stop and remove the agent before
+                deleting the record.
+              </p>
+              <label>
+                Target IP
+                <input
+                  type="text"
+                  value={form.targetIp}
+                  onChange={(e) => updateField("targetIp", e.target.value)}
+                  placeholder="192.168.1.50"
+                />
+              </label>
+              <label>
+                SSH port
+                <input
+                  type="number"
+                  min={1}
+                  value={form.sshPort}
+                  onChange={(e) => updateField("sshPort", e.target.value)}
+                />
+              </label>
+              <label>
+                Username
+                <input
+                  type="text"
+                  value={form.username}
+                  onChange={(e) => updateField("username", e.target.value)}
+                />
+              </label>
+              <label>
+                Password
+                <input
+                  type="password"
+                  value={form.password}
+                  onChange={(e) => updateField("password", e.target.value)}
+                />
+              </label>
+              <label>
+                Sudo password (optional, defaults to Password)
+                <input
+                  type="password"
+                  value={form.sudoPassword}
+                  onChange={(e) => updateField("sudoPassword", e.target.value)}
+                />
+              </label>
+
+              {error && <p className="error-text">{error}</p>}
+
+              <div className="remove-host-form-actions">
+                <button type="submit" className="danger-button" disabled={removing}>
+                  {removing ? "Uninstalling…" : "Uninstall & remove"}
+                </button>
+                <button type="button" onClick={handleModalClose} disabled={removing}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }

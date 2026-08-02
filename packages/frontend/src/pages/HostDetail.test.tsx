@@ -146,6 +146,21 @@ describe("HostDetail remove button - online agent host (SSH uninstall flow)", ()
     expect(window.confirm).not.toHaveBeenCalled();
     expect(mockedDeleteHost).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Uninstall & remove" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("closes the modal on Cancel without submitting", async () => {
+    const user = userEvent.setup();
+    setHost(makeHost({ status: "online" }));
+    renderHostDetail();
+
+    await user.click(screen.getByRole("button", { name: "Remove host" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockedPostUninstall).not.toHaveBeenCalled();
   });
 
   it("validates the SSH form before submitting", async () => {
