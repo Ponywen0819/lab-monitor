@@ -67,7 +67,7 @@ SQLite 檔案預設寫在 `./data/collector.db`（`data/` 已在 `.gitignore` �
 | `SMTP_USER` / `SMTP_APP_PASSWORD` | 寄信用的獨立 Gmail 帳號（見 `.env.example` 註解） | 未設定則自動停用通知，不會噴錯 |
 | `COLLECTOR_WS_URL` | 寫入新安裝 Agent 設定檔的回連位址，**必須是區網真實 IP**，不能是 `localhost` | `ws://localhost:8080` |
 | `AGENT_BINARY_DIR` | 遠端安裝用，存放各架構 Agent 執行檔（`agent-linux-x64`、`agent-linux-arm64`）的目錄 | 見 `packages/collector/src/remote-installer/index.ts` |
-| `ALLOWED_CIDRS` | 限制 HTTP API（dashboard、Settings、安裝/解除安裝）來源 IP，逗號分隔多個 CIDR，例如 `192.168.1.0/24,10.0.0.0/16` | 未設定則不限制。只擋 HTTP，agent/前端的 WebSocket 連線不受影響 |
+| `ALLOWED_CIDRS` | 限制 HTTP API 與前端 dashboard 的 WebSocket 連線來源 IP，逗號分隔多個 CIDR，例如 `192.168.1.0/24,10.0.0.0/16` | 未設定則不限制。只擋前端，agent 回報用的 WebSocket 連線不受影響（agent 本來就可能跟操作者不同網段） |
 
 沒有設定 SMTP 帳密也能正常開發，這個子模組會記 log 並自我停用，不影響其他功能。NAS 主機不是環境變數設定的，是透過 Settings 頁面（`POST /api/nas-hosts`）動態新增，存在 SQLite 的 `nas_host` 表裡，新增後立刻開始 ping，不用重啟 collector。
 

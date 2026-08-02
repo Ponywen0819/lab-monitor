@@ -18,7 +18,7 @@ const mockedPostInstall = vi.mocked(postInstall);
 const mockedUseHosts = vi.mocked(useHosts);
 
 function setInstallEvents(events: Map<string, InstallProgressEvent[]>): void {
-  mockedUseHosts.mockReturnValue({ hosts: new Map(), connected: true, installEvents: events, uninstallEvents: new Map() });
+  mockedUseHosts.mockReturnValue({ hosts: new Map(), connected: true, installEvents: events, uninstallEvents: new Map(), forbidden: false });
 }
 
 function makeInstallEvent(overrides: Partial<InstallProgressEvent> = {}): InstallProgressEvent {

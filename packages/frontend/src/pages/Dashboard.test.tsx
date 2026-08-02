@@ -33,7 +33,7 @@ function makeHost(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
 
 function setHosts(hosts: HostSnapshot[], connected = true): void {
   const map = new Map(hosts.map((h) => [h.id, h]));
-  mockedUseHosts.mockReturnValue({ hosts: map, connected, installEvents: new Map(), uninstallEvents: new Map() });
+  mockedUseHosts.mockReturnValue({ hosts: map, connected, installEvents: new Map(), uninstallEvents: new Map(), forbidden: false });
 }
 
 let navigateSpy: ReturnType<typeof vi.fn>;

@@ -14,14 +14,20 @@ import type {
   InstallProgressEvent,
   UninstallProgressEvent,
 } from "@labmon/shared";
-import { fetchHosts } from "../api/client";
+import { ApiError, fetchHosts } from "../api/client";
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:8080";
 const RECONNECT_DELAY_MS = 3000;
+// Application-specific close code the collector uses when a dashboard
+// subscribe comes from outside ALLOWED_CIDRS -- see ws-server.ts.
+const FORBIDDEN_CLOSE_CODE = 4403;
 
 interface WsContextValue {
   hosts: Map<string, HostSnapshot>;
   connected: boolean;
+  // True once either the REST seed or the WS subscribe comes back 403 --
+  // the IP isn't going to change mid-session, so this is sticky (no retry).
+  forbidden: boolean;
   // Keyed by installId so the Remote Install page can subscribe to just the
   // install it kicked off; events accumulate in arrival order per install.
   installEvents: Map<string, InstallProgressEvent[]>;
@@ -34,6 +40,7 @@ const WsContext = createContext<WsContextValue | null>(null);
 export function WsProvider({ children }: { children: ReactNode }) {
   const [hosts, setHosts] = useState<Map<string, HostSnapshot>>(new Map());
   const [connected, setConnected] = useState(false);
+  const [forbidden, setForbidden] = useState(false);
   const [installEvents, setInstallEvents] = useState<Map<string, InstallProgressEvent[]>>(new Map());
   const [uninstallEvents, setUninstallEvents] = useState<Map<string, UninstallProgressEvent[]>>(new Map());
   const wsRef = useRef<WebSocket | null>(null);
@@ -58,7 +65,13 @@ export function WsProvider({ children }: { children: ReactNode }) {
           return next;
         });
       })
-      .catch((err) => console.error("[ws] failed to seed initial hosts:", err));
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 403) {
+          setForbidden(true);
+          return;
+        }
+        console.error("[ws] failed to seed initial hosts:", err);
+      });
 
     connect();
 
@@ -100,8 +113,13 @@ export function WsProvider({ children }: { children: ReactNode }) {
       handleMessage(message);
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (wsRef.current !== ws) return;
+      if (event?.code === FORBIDDEN_CLOSE_CODE) {
+        setConnected(false);
+        setForbidden(true);
+        return;
+      }
       scheduleReconnect();
     };
     ws.onerror = () => ws.close();
@@ -166,8 +184,8 @@ export function WsProvider({ children }: { children: ReactNode }) {
   }
 
   const value = useMemo<WsContextValue>(
-    () => ({ hosts, connected, installEvents, uninstallEvents }),
-    [hosts, connected, installEvents, uninstallEvents],
+    () => ({ hosts, connected, forbidden, installEvents, uninstallEvents }),
+    [hosts, connected, forbidden, installEvents, uninstallEvents],
   );
 
   return <WsContext.Provider value={value}>{children}</WsContext.Provider>;

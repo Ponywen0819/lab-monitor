@@ -11,10 +11,22 @@ import type {
 // works out of the box without requiring a .env file.
 const BASE_URL = import.meta.env.VITE_HTTP_BASE_URL ?? "http://localhost:8081";
 
+// Carries the HTTP status so callers (WsProvider's forbidden-IP detection,
+// in particular) can branch on it instead of string-matching the message.
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`);
   if (!res.ok) {
-    throw new Error(`GET ${path} failed: ${res.status} ${res.statusText}`);
+    throw new ApiError(`GET ${path} failed: ${res.status} ${res.statusText}`, res.status);
   }
   return res.json() as Promise<T>;
 }

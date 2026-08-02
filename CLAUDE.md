@@ -56,7 +56,7 @@ npx vitest run path/to/some.test.ts --workspace=packages/collector   # 只跑單
 - `COLLECTOR_WS_URL`——必須填 collector 主機真實的區網 IP，不能是 `localhost`。這個值會被寫進每一台新安裝 agent 的設定檔，讓它知道要回連到哪裡。
 - `VITE_HTTP_BASE_URL` / `VITE_WS_URL`——在 *build time* 就烤進前端的靜態檔案，Docker build 完之後再改 `.env` 不會生效，要重新 build 才會反映。
 - 沒設定 `SMTP_USER`/`SMTP_APP_PASSWORD` 只會讓對應子模組印一行 log 並自我停用，不會噴錯——本機開發時這是正常狀況。NAS 主機清單不在這裡設定，見上面「架構」一節。
-- `ALLOWED_CIDRS`——逗號分隔的 CIDR 清單（見 `collector/src/ip-allowlist.ts`），只限制 HTTP API（`http-server.ts` 在其他任何路由邏輯之前，先用 `req.socket.remoteAddress` 擋一次，不合格直接 403），WS（agent 回報、前端 dashboard 推播）不受影響。未設定就是完全不限制，維持原本「內部網路工具、無認證」的預設。
+- `ALLOWED_CIDRS`——逗號分隔的 CIDR 清單（見 `collector/src/ip-allowlist.ts`），限制的是 HTTP API（`http-server.ts` 在其他任何路由邏輯之前，先用 `req.socket.remoteAddress` 擋一次，不合格直接 403）跟前端 dashboard 的 WS 訂閱（`ws-server.ts` 只在收到 `dashboard_subscribe` 訊息時才檢查來源 IP，不合格就 `ws.close(4403, ...)`，不會加進 `frontendConnections`）。Agent 的 `agent_report` 訊息刻意不受此限制——它們就活在被監控的實驗室機器上，本來就可能落在跟操作者瀏覽器不同的網段，這正是這工具存在的意義。前端 `WsProvider` 看到 4403 這個 close code、或是 REST 種子請求回 403，會把 `forbidden` 設成 true 並停止重連（IP 不會在同一個 session 裡變），`App.tsx` 據此整頁換成拒絕存取訊息。未設定 `ALLOWED_CIDRS` 就是完全不限制，維持原本「內部網路工具、無認證」的預設。
 
 # Docker 部署
 
