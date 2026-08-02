@@ -126,6 +126,28 @@ describe("Dashboard", () => {
     expect(names).toEqual(["Alice", "Bob", "Charlie"]);
   });
 
+  it("splits agent hosts and NAS hosts into separate sections", () => {
+    setHosts([
+      makeHost({ id: "agent-1", name: "Agent Box", type: "agent" }),
+      makeHost({ id: "nas-1", name: "Storage Box", type: "nas" }),
+    ]);
+    renderDashboard();
+
+    const sections = document.querySelectorAll(".host-section");
+    expect(sections).toHaveLength(2);
+    expect(sections[0].querySelector("h3")?.textContent).toBe("Hosts");
+    expect(sections[0].textContent).toContain("Agent Box");
+    expect(sections[1].querySelector("h3")?.textContent).toBe("NAS");
+    expect(sections[1].textContent).toContain("Storage Box");
+  });
+
+  it("shows a section-specific empty state when one type has no hosts", () => {
+    setHosts([makeHost({ id: "agent-1", name: "Agent Box", type: "agent" })]);
+    renderDashboard();
+
+    expect(screen.getByText("No NAS hosts added yet.")).toBeInTheDocument();
+  });
+
   it("navigates to the host detail page when a host card is clicked", async () => {
     const user = userEvent.setup();
     setHosts([makeHost({ id: "agent-42", name: "Clickable Host" })]);

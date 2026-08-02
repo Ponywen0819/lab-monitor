@@ -114,9 +114,32 @@ function HostCard({ host }: { host: HostSnapshot }) {
   );
 }
 
+function byName(a: HostSnapshot, b: HostSnapshot): number {
+  return a.name.localeCompare(b.name);
+}
+
+function HostSection({ title, hosts, emptyText }: { title: string; hosts: HostSnapshot[]; emptyText: string }) {
+  return (
+    <section className="host-section">
+      <h3>{title}</h3>
+      {hosts.length === 0 ? (
+        <p className="empty-state">{emptyText}</p>
+      ) : (
+        <div className="host-grid">
+          {hosts.map((host) => (
+            <HostCard key={host.id} host={host} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function Dashboard() {
   const { hosts, connected } = useHosts();
-  const sortedHosts = [...hosts.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const allHosts = [...hosts.values()];
+  const agentHosts = allHosts.filter((h) => h.type === "agent").sort(byName);
+  const nasHosts = allHosts.filter((h) => h.type === "nas").sort(byName);
 
   return (
     <div>
@@ -127,14 +150,13 @@ export function Dashboard() {
         </span>
       </div>
 
-      {sortedHosts.length === 0 ? (
+      {allHosts.length === 0 ? (
         <p className="empty-state">No hosts reported yet.</p>
       ) : (
-        <div className="host-grid">
-          {sortedHosts.map((host) => (
-            <HostCard key={host.id} host={host} />
-          ))}
-        </div>
+        <>
+          <HostSection title="Hosts" hosts={agentHosts} emptyText="No agent hosts reported yet." />
+          <HostSection title="NAS" hosts={nasHosts} emptyText="No NAS hosts added yet." />
+        </>
       )}
     </div>
   );
