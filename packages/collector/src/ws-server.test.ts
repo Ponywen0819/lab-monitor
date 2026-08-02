@@ -206,3 +206,86 @@ describe("WsServer", () => {
     await expect(connectClient(port)).rejects.toThrow();
   });
 });
+
+describe("WsServer with an IP allowlist", () => {
+  let port: number;
+  let server: WsServer;
+  const clients: WebSocket[] = [];
+
+  afterEach(() => {
+    for (const ws of clients) {
+      if (ws.readyState === WebSocket.OPEN) ws.close();
+    }
+    server.stop();
+  });
+
+  // Explicit 127.0.0.1 (not "localhost", which connectClientRetrying uses)
+  // so the connection's remote address is deterministically IPv4, matching
+  // the CIDRs under test.
+  async function client(): Promise<WebSocket> {
+    let lastErr: unknown;
+    for (let i = 0; i < 10; i++) {
+      try {
+        const ws = await new Promise<WebSocket>((resolve, reject) => {
+          const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+          socket.once("open", () => resolve(socket));
+          socket.once("error", reject);
+        });
+        clients.push(ws);
+        return ws;
+      } catch (err) {
+        lastErr = err;
+        await sleep(30);
+      }
+    }
+    throw lastErr;
+  }
+
+  it("still accepts agent_report from outside the allowlist -- only the dashboard subscribe is gated", async () => {
+    port = await getFreePort();
+    server = new WsServer({ port, allowedCidrs: ["10.0.0.0/8"] });
+    server.start();
+
+    const ws = await client();
+    const message = agentReport("h1");
+    const eventPromise = once(server, "agent_report");
+    ws.send(JSON.stringify(message));
+
+    const [received] = await eventPromise;
+    expect(received).toEqual(message);
+  });
+
+  it("closes a dashboard_subscribe connection from outside the allowlist instead of adding it to the broadcast set", async () => {
+    port = await getFreePort();
+    server = new WsServer({ port, allowedCidrs: ["10.0.0.0/8"] });
+    server.start();
+
+    const ws = await client();
+    const closePromise = once(ws, "close");
+    ws.send(JSON.stringify({ type: "dashboard_subscribe" }));
+
+    const [code] = await closePromise;
+    expect(code).toBe(4403);
+
+    // Confirms it never landed in frontendConnections: nothing throws, and
+    // there's no listening socket left to receive the broadcast anyway.
+    expect(() => server.broadcastToFrontends({ type: "host_update", host: sampleSnapshot })).not.toThrow();
+  });
+
+  it("accepts a dashboard_subscribe connection from inside the allowlist", async () => {
+    port = await getFreePort();
+    server = new WsServer({ port, allowedCidrs: ["127.0.0.1/32"] });
+    server.start();
+
+    const ws = await client();
+    const messagePromise = waitForMessage(ws);
+    ws.send(JSON.stringify({ type: "dashboard_subscribe" }));
+    await sleep(100);
+
+    const payload: HostUpdateMessage = { type: "host_update", host: sampleSnapshot };
+    server.broadcastToFrontends(payload);
+
+    const received = await messagePromise;
+    expect(received).toEqual(payload);
+  });
+});

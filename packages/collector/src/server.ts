@@ -16,7 +16,11 @@ export interface CollectorServerOptions {
   wsPort: number;
   httpPort: number;
   dbPath: string;
-  /** Restricts the HTTP API to these CIDRs; empty/omitted means unrestricted. See ip-allowlist.ts. */
+  /**
+   * Restricts the HTTP API, and the dashboard's WS subscription (not agent
+   * connections -- see ws-server.ts), to these CIDRs. Empty/omitted means
+   * unrestricted. See ip-allowlist.ts.
+   */
   allowedCidrs?: string[];
 }
 
@@ -55,7 +59,7 @@ function handleAgentReport(storage: Storage, stateMachine: OfflineStateMachine, 
 export function createCollectorServer(options: CollectorServerOptions): CollectorServer {
   const storage = createStorage(options.dbPath);
   const stateMachine = createOfflineStateMachine();
-  const wsServer = new WsServer({ port: options.wsPort });
+  const wsServer = new WsServer({ port: options.wsPort, allowedCidrs: options.allowedCidrs });
 
   wsServer.on("agent_report", handleAgentReport(storage, stateMachine, wsServer));
 

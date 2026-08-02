@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
+import type { IncomingMessage } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import type { AgentReportMessage, CollectorToFrontendMessage, WsMessage } from "@labmon/shared";
+import { isIpAllowed } from "./ip-allowlist.js";
 
 interface AgentConnection {
   ws: WebSocket;
@@ -32,15 +34,20 @@ export class WsServer extends EventEmitter {
   private readonly agentConnections = new Map<string, AgentConnection>();
   private readonly agentHostByWs = new Map<WebSocket, string>();
   private readonly frontendConnections = new Set<WebSocket>();
+  // Only populated long enough to gate a dashboard_subscribe -- a WeakMap so
+  // entries fall out on their own once a socket is garbage collected.
+  private readonly remoteAddressByWs = new WeakMap<WebSocket, string | undefined>();
+  private readonly allowedCidrs: string[];
 
-  constructor(options: { port: number }) {
+  constructor(options: { port: number; allowedCidrs?: string[] }) {
     super();
     this.port = options.port;
+    this.allowedCidrs = options.allowedCidrs ?? [];
   }
 
   start(): void {
     this.wss = new WebSocketServer({ port: this.port });
-    this.wss.on("connection", (ws) => this.handleConnection(ws));
+    this.wss.on("connection", (ws, req) => this.handleConnection(ws, req));
   }
 
   stop(): void {
@@ -57,7 +64,8 @@ export class WsServer extends EventEmitter {
     }
   }
 
-  private handleConnection(ws: WebSocket): void {
+  private handleConnection(ws: WebSocket, req: IncomingMessage): void {
+    this.remoteAddressByWs.set(ws, req.socket.remoteAddress);
     ws.on("message", (raw) => this.handleMessage(ws, raw));
     ws.on("close", () => this.handleDisconnect(ws));
     ws.on("error", () => this.handleDisconnect(ws));
@@ -79,6 +87,15 @@ export class WsServer extends EventEmitter {
     }
 
     if (message.type === "dashboard_subscribe") {
+      // Agents are deliberately exempt -- they live on the monitored lab
+      // machines, which is the whole point of this tool, and may well sit
+      // outside whatever subnet an operator's browser is restricted to.
+      // Only the dashboard's own subscribe is gated, using the same
+      // ALLOWED_CIDRS as the HTTP API.
+      if (!isIpAllowed(this.remoteAddressByWs.get(ws), this.allowedCidrs)) {
+        ws.close(4403, "forbidden");
+        return;
+      }
       this.frontendConnections.add(ws);
       return;
     }

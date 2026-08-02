@@ -48,6 +48,7 @@ function setHost(host: HostSnapshot): void {
   mockedUseHosts.mockReturnValue({
     hosts: new Map([[host.id, host]]),
     connected: true,
+    forbidden: false,
     installEvents: new Map(),
     uninstallEvents,
   });
@@ -230,7 +231,7 @@ describe("HostDetail remove button - online agent host (SSH uninstall flow)", ()
     // Simulates the host_removed broadcast arriving before the "done"
     // progress event -- the host vanishes from the WS-driven map mid-flow.
     // The modal (and its progress log) must survive this, not unmount.
-    mockedUseHosts.mockReturnValue({ hosts: new Map(), connected: true, installEvents: new Map(), uninstallEvents });
+    mockedUseHosts.mockReturnValue({ hosts: new Map(), connected: true, installEvents: new Map(), uninstallEvents, forbidden: false });
     rerender(
       <MemoryRouter>
         <HostDetail />
@@ -258,7 +259,7 @@ describe("HostDetail remove button - online agent host (SSH uninstall flow)", ()
         ],
       ],
     ]);
-    mockedUseHosts.mockReturnValue({ hosts: new Map(), connected: true, installEvents: new Map(), uninstallEvents });
+    mockedUseHosts.mockReturnValue({ hosts: new Map(), connected: true, installEvents: new Map(), uninstallEvents, forbidden: false });
     rerender(
       <MemoryRouter>
         <HostDetail />

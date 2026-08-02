@@ -1,12 +1,13 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HostSnapshot, InstallProgressEvent } from "@labmon/shared";
-import { fetchHosts } from "../api/client";
+import { ApiError, fetchHosts } from "../api/client";
 import { WsProvider, useHosts } from "./WsProvider";
 
-vi.mock("../api/client", () => ({
-  fetchHosts: vi.fn(),
-}));
+vi.mock("../api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/client")>();
+  return { ...actual, fetchHosts: vi.fn() };
+});
 
 const mockedFetchHosts = vi.mocked(fetchHosts);
 
@@ -15,7 +16,7 @@ class FakeWebSocket {
   url: string;
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((event?: { code: number }) => void) | null = null;
   onerror: (() => void) | null = null;
   sent: string[] = [];
   readyState = 0;
@@ -29,9 +30,9 @@ class FakeWebSocket {
     this.sent.push(data);
   }
 
-  close(): void {
+  close(code?: number): void {
     this.readyState = 3;
-    this.onclose?.();
+    this.onclose?.(code !== undefined ? { code } : undefined);
   }
 }
 
@@ -59,10 +60,11 @@ function makeInstallEvent(overrides: Partial<InstallProgressEvent> = {}): Instal
 }
 
 function Consumer() {
-  const { hosts, connected, installEvents } = useHosts();
+  const { hosts, connected, forbidden, installEvents } = useHosts();
   return (
     <div>
       <div data-testid="connected">{String(connected)}</div>
+      <div data-testid="forbidden">{String(forbidden)}</div>
       <div data-testid="hosts">{JSON.stringify([...hosts.entries()])}</div>
       <div data-testid="install-events">{JSON.stringify([...installEvents.entries()])}</div>
     </div>
@@ -79,6 +81,10 @@ function readInstallEvents(): Map<string, InstallProgressEvent[]> {
 
 function readConnected(): boolean {
   return screen.getByTestId("connected").textContent === "true";
+}
+
+function readForbidden(): boolean {
+  return screen.getByTestId("forbidden").textContent === "true";
 }
 
 beforeEach(() => {
@@ -302,6 +308,40 @@ describe("WsProvider", () => {
     const second = FakeWebSocket.instances[1];
     act(() => second.onopen?.());
     expect(readConnected()).toBe(true);
+  });
+
+  it("sets forbidden and stops reconnecting when the socket closes with the collector's 403 close code", () => {
+    mockedFetchHosts.mockResolvedValue([]);
+    render(
+      <WsProvider>
+        <Consumer />
+      </WsProvider>,
+    );
+    const first = FakeWebSocket.instances[0];
+
+    vi.useFakeTimers();
+    act(() => first.close(4403));
+
+    expect(readConnected()).toBe(false);
+    expect(readForbidden()).toBe(true);
+
+    // A forbidden IP isn't going to change mid-session -- no point retrying.
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(FakeWebSocket.instances.length).toBe(1);
+  });
+
+  it("sets forbidden when the initial REST seed comes back 403, without logging it as an unexpected error", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockedFetchHosts.mockRejectedValue(new ApiError("GET /api/hosts failed: 403 forbidden", 403));
+
+    render(
+      <WsProvider>
+        <Consumer />
+      </WsProvider>,
+    );
+
+    await waitFor(() => expect(readForbidden()).toBe(true));
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 
   it("drops a message that arrives on a superseded socket instead of processing it twice", () => {
