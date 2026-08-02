@@ -20,10 +20,11 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { InstallProgressEvent, InstallRequest } from "@labmon/shared";
+import type { InstallProgressEvent, InstallRequest, UninstallProgressEvent, UninstallRequest } from "@labmon/shared";
 import type { Storage } from "../storage/db.js";
 import type { OfflineStateMachine } from "../state-machine.js";
 import { runInstall } from "./install-agent.js";
+import { runUninstall } from "./uninstall-agent.js";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 
@@ -32,19 +33,25 @@ const DEFAULT_AGENT_BINARY_DIR = resolve(moduleDir, "../../../agent/dist-bin");
 const DEFAULT_COLLECTOR_WS_URL = "ws://localhost:8080";
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_WAIT_FOR_CONNECTION_TIMEOUT_MS = 30_000;
+const DEFAULT_WAIT_FOR_DISCONNECT_TIMEOUT_MS = 30_000;
 
 export interface RemoteInstallerOptions {
   storage: Storage;
   stateMachine: OfflineStateMachine;
+  /** Same callback http-server.ts's DELETE uses -- keeps nasProber/broadcast in sync after an uninstall. */
+  onHostRemoved: (hostId: string) => void;
   agentBinaryDir?: string;
   collectorWsUrl?: string;
   connectTimeoutMs?: number;
   waitForConnectionTimeoutMs?: number;
+  waitForDisconnectTimeoutMs?: number;
 }
 
 export interface RemoteInstallerEvents {
   /** Fired for every stage transition of every installAgent() call, tagged by installId. */
   progress: (event: InstallProgressEvent) => void;
+  /** Fired for every stage transition of every uninstallAgent() call, tagged by uninstallId. */
+  uninstallProgress: (event: UninstallProgressEvent) => void;
 }
 
 export declare interface RemoteInstaller {
@@ -56,19 +63,24 @@ export declare interface RemoteInstaller {
 export class RemoteInstaller extends EventEmitter {
   private readonly storage: Storage;
   private readonly stateMachine: OfflineStateMachine;
+  private readonly onHostRemoved: (hostId: string) => void;
   private readonly agentBinaryDir: string;
   private readonly collectorWsUrl: string;
   private readonly connectTimeoutMs: number;
   private readonly waitForConnectionTimeoutMs: number;
+  private readonly waitForDisconnectTimeoutMs: number;
 
   constructor(options: RemoteInstallerOptions) {
     super();
     this.storage = options.storage;
     this.stateMachine = options.stateMachine;
+    this.onHostRemoved = options.onHostRemoved;
     this.agentBinaryDir = options.agentBinaryDir ?? process.env.AGENT_BINARY_DIR ?? DEFAULT_AGENT_BINARY_DIR;
     this.collectorWsUrl = options.collectorWsUrl ?? process.env.COLLECTOR_WS_URL ?? DEFAULT_COLLECTOR_WS_URL;
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
     this.waitForConnectionTimeoutMs = options.waitForConnectionTimeoutMs ?? DEFAULT_WAIT_FOR_CONNECTION_TIMEOUT_MS;
+    this.waitForDisconnectTimeoutMs =
+      options.waitForDisconnectTimeoutMs ?? DEFAULT_WAIT_FOR_DISCONNECT_TIMEOUT_MS;
   }
 
   /**
@@ -91,6 +103,28 @@ export class RemoteInstaller extends EventEmitter {
     });
 
     return installId;
+  }
+
+  /**
+   * Mints and returns an uninstallId synchronously; the SSH flow itself runs
+   * in the background and only deletes the host's DB row once it has
+   * confirmed (via the state machine, not just SSH exit codes) that the
+   * agent actually disconnected. Observe progress via "uninstallProgress",
+   * filtering on this uninstallId.
+   */
+  uninstallAgent(hostId: string, request: UninstallRequest): string {
+    const uninstallId = randomUUID();
+
+    void runUninstall(uninstallId, hostId, request, {
+      storage: this.storage,
+      stateMachine: this.stateMachine,
+      connectTimeoutMs: this.connectTimeoutMs,
+      waitForDisconnectTimeoutMs: this.waitForDisconnectTimeoutMs,
+      onHostRemoved: this.onHostRemoved,
+      emit: (event) => this.emit("uninstallProgress", event),
+    });
+
+    return uninstallId;
   }
 }
 

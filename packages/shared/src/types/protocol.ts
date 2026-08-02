@@ -1,6 +1,7 @@
 import type { HostMetrics } from "./metrics.js";
 import type { HostSnapshot, HostStatus } from "./host.js";
 import type { InstallProgressEvent } from "./install.js";
+import type { UninstallProgressEvent } from "./uninstall.js";
 
 /** Agent -> Collector: pushed every collection cycle, doubles as a heartbeat. */
 export interface AgentReportMessage {
@@ -41,12 +42,19 @@ export interface HostRemovedMessage {
   hostId: string;
 }
 
+/** Collector -> Frontend: progress push for an in-flight remote uninstall. */
+export interface UninstallProgressMessage {
+  type: "uninstall_progress";
+  event: UninstallProgressEvent;
+}
+
 export type AgentToCollectorMessage = AgentReportMessage;
 export type FrontendToCollectorMessage = DashboardSubscribeMessage;
 export type CollectorToFrontendMessage =
   | HostUpdateMessage
   | HostStatusMessage
   | InstallProgressMessage
+  | UninstallProgressMessage
   | HostRemovedMessage;
 
 export type WsMessage =

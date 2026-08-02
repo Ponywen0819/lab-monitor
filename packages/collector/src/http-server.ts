@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { METRIC_RETENTION_MS, type HostSnapshot, type InstallRequest, type NasHostConfig } from "@labmon/shared";
+import {
+  METRIC_RETENTION_MS,
+  type HostSnapshot,
+  type InstallRequest,
+  type NasHostConfig,
+  type UninstallRequest,
+} from "@labmon/shared";
 import { getHostSnapshot } from "./host-snapshot.js";
 import type { Storage } from "./storage/db.js";
 import type { OfflineStateMachine } from "./state-machine.js";
@@ -71,7 +77,10 @@ function parseNasHostRequest(body: unknown): { name: string; ip: string } | null
   return { name, ip };
 }
 
-function parseInstallRequest(body: unknown): InstallRequest | null {
+// InstallRequest and UninstallRequest are structurally identical (both are
+// just "one-time SSH credentials for a target host"), so both the install
+// and uninstall HTTP handlers share this one parser.
+function parseSshCredentialsRequest(body: unknown): InstallRequest | null {
   if (typeof body !== "object" || body === null) return null;
   const { targetIp, sshPort, username, password, sudoPassword } = body as Record<string, unknown>;
 
@@ -139,11 +148,14 @@ export function createHttpServer(options: HttpServerOptions): HttpServer {
           sendJson(res, 404, { error: "host not found" });
           return;
         }
-        // "online" is the one status that must not be deletable out from under
-        // a host still actively reporting -- everything else (disconnected,
-        // offline, notified) is fair game.
-        if (snapshot.status === "online") {
-          sendJson(res, 409, { error: "cannot delete a host that is currently online" });
+        // An online agent still has a live process on the target host --
+        // deleting the DB row here would just let it re-register itself on
+        // its next report. NAS hosts have no agent to leave behind, so
+        // there's nothing to gate on for them.
+        if (snapshot.type === "agent" && snapshot.status === "online") {
+          sendJson(res, 409, {
+            error: "host is online -- use POST /api/hosts/:id/uninstall to remove its agent first",
+          });
           return;
         }
         storage.deleteHost(hostId);
@@ -151,6 +163,37 @@ export function createHttpServer(options: HttpServerOptions): HttpServer {
         nasProber.removeHost(hostId);
         onHostRemoved(hostId);
         sendJson(res, 200, { id: hostId });
+        return;
+      }
+
+      if (
+        segments.length === 4 &&
+        segments[0] === "api" &&
+        segments[1] === "hosts" &&
+        segments[3] === "uninstall" &&
+        method === "POST"
+      ) {
+        const hostId = decodeURIComponent(segments[2]);
+        const snapshot = getHostSnapshot(hostId, storage, stateMachine);
+        if (!snapshot) {
+          sendJson(res, 404, { error: "host not found" });
+          return;
+        }
+        if (snapshot.type !== "agent") {
+          sendJson(res, 400, { error: "only agent hosts have an agent to uninstall" });
+          return;
+        }
+        const body = await readJsonBody(req);
+        const request: UninstallRequest | null = parseSshCredentialsRequest(body);
+        if (!request) {
+          sendJson(res, 400, {
+            error:
+              "body must include targetIp (string), sshPort (positive integer), username (string), password (string), sudoPassword (string)",
+          });
+          return;
+        }
+        const uninstallId = remoteInstaller.uninstallAgent(hostId, request);
+        sendJson(res, 202, { uninstallId });
         return;
       }
 
@@ -203,7 +246,7 @@ export function createHttpServer(options: HttpServerOptions): HttpServer {
 
       if (segments.length === 2 && segments[0] === "api" && segments[1] === "install" && method === "POST") {
         const body = await readJsonBody(req);
-        const request = parseInstallRequest(body);
+        const request = parseSshCredentialsRequest(body);
         if (!request) {
           sendJson(res, 400, {
             error:

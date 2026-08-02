@@ -44,16 +44,18 @@ async function detectRemoteHostname(session: SshSession): Promise<string | null>
   return result.code === 0 && hostname.length > 0 ? hostname : null;
 }
 
-const AGENT_REMOTE_DIR = "/opt/labmon-agent";
-const CONFIG_REMOTE_DIR = "/etc/labmon-agent";
+// Shared with uninstall-agent.ts, which needs to remove exactly what this
+// installs.
+export const AGENT_REMOTE_DIR = "/opt/labmon-agent";
+export const CONFIG_REMOTE_DIR = "/etc/labmon-agent";
+export const SYSTEMD_UNIT_PATH = "/etc/systemd/system/labmon-agent.service";
 const CONFIG_REMOTE_PATH = `${CONFIG_REMOTE_DIR}/config.json`;
-const SYSTEMD_UNIT_PATH = "/etc/systemd/system/labmon-agent.service";
 
 // sudo -S reads exactly one line per invocation and otherwise ignores stdin
 // (a NOPASSWD sudoer never touches it at all), so supplying one password
 // line per chained "sudo -S" in the command is correct whether or not this
 // target actually needs one -- no upfront detection required.
-function sudoStdin(sudoPassword: string, command: string): string {
+export function sudoStdin(sudoPassword: string, command: string): string {
   const invocations = command.split("sudo -S").length - 1;
   return `${sudoPassword}\n`.repeat(invocations);
 }

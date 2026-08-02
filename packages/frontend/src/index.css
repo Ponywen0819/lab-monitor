@@ -326,6 +326,24 @@ body {
   font-size: 0.85rem;
 }
 
+.remove-host-form-actions {
+  display: flex;
+  gap: 0.6rem;
+}
+
+/* ".settings-form button" otherwise outranks ".danger-button" here (two
+   classes + tag beats one class), so it'd repaint this button as a plain
+   one -- these two rules restore the danger styling at matching specificity. */
+.settings-form button.danger-button {
+  border-color: var(--status-notified);
+  color: var(--status-notified);
+}
+
+.settings-form button.danger-button:hover:not(:disabled) {
+  background: var(--status-notified);
+  color: #fff;
+}
+
 .danger-button {
   font: inherit;
   background: var(--card-bg);
