@@ -15,7 +15,6 @@ const EMPTY_FORM: FormState = { targetIp: "", sshPort: "22", username: "", passw
 
 const STAGE_LABEL: Record<InstallStage, string> = {
   connecting: "Connecting",
-  deploying_key: "Deploying key",
   uploading_agent: "Uploading agent",
   starting_service: "Starting service",
   waiting_for_connection: "Waiting for connection",

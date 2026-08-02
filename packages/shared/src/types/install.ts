@@ -12,7 +12,6 @@ export interface InstallRequest {
 
 export type InstallStage =
   | "connecting"
-  | "deploying_key"
   | "uploading_agent"
   | "starting_service"
   | "waiting_for_connection"

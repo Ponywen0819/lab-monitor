@@ -7,9 +7,7 @@ services:
       - "8080:8080" # WebSocket (agents + frontend)
       - "8081:8081" # HTTP API
     volumes:
-      # SQLite DB + the collector's own persistent SSH keypair both live
-      # under here (see DB_PATH / COLLECTOR_SSH_KEY_PATH defaults) -- one
-      # bind mount covers both, no separate volume needed.
+      # SQLite DB lives under here (see DB_PATH default).
       - ./data:/app/data
     env_file:
       - .env

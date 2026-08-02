@@ -4,14 +4,12 @@ import { randomUUID } from "node:crypto";
 import type { InstallProgressEvent, InstallRequest, InstallStage } from "@labmon/shared";
 import type { Storage } from "../storage/db.js";
 import type { OfflineStateMachine, StatusChangeEvent } from "../state-machine.js";
-import { ensureCollectorKeyPair } from "./ssh-key.js";
 import { SshSession } from "./ssh-session.js";
 import { renderSystemdUnit } from "./systemd-unit.js";
 
 export interface InstallAgentDeps {
   storage: Storage;
   stateMachine: OfflineStateMachine;
-  sshKeyPath: string;
   agentBinaryDir: string;
   collectorWsUrl: string;
   connectTimeoutMs: number;
@@ -50,24 +48,6 @@ const AGENT_REMOTE_DIR = "/opt/labmon-agent";
 const CONFIG_REMOTE_DIR = "/etc/labmon-agent";
 const CONFIG_REMOTE_PATH = `${CONFIG_REMOTE_DIR}/config.json`;
 const SYSTEMD_UNIT_PATH = "/etc/systemd/system/labmon-agent.service";
-
-async function deployAuthorizedKey(session: SshSession, publicKey: string): Promise<void> {
-  // publicKey is our own freshly generated key, not caller input, but it's
-  // still quoted defensively since it's interpolated into a shell command.
-  const escaped = publicKey.replace(/'/g, `'\\''`);
-  const cmd = [
-    "mkdir -p ~/.ssh",
-    "chmod 700 ~/.ssh",
-    "touch ~/.ssh/authorized_keys",
-    "chmod 600 ~/.ssh/authorized_keys",
-    `grep -qxF '${escaped}' ~/.ssh/authorized_keys || echo '${escaped}' >> ~/.ssh/authorized_keys`,
-  ].join(" && ");
-
-  const result = await session.exec(cmd);
-  if (result.code !== 0) {
-    throw new Error(`failed to deploy authorized_keys (exit ${result.code}): ${result.stderr || result.stdout}`);
-  }
-}
 
 // sudo -S reads exactly one line per invocation and otherwise ignores stdin
 // (a NOPASSWD sudoer never touches it at all), so supplying one password
@@ -163,16 +143,11 @@ export async function runInstall(installId: string, request: InstallRequest, dep
   try {
     emitStage("connecting", `Connecting to ${request.targetIp}:${request.sshPort} as ${request.username}`);
 
-    const keyPair = ensureCollectorKeyPair(deps.sshKeyPath);
-
     session = await SshSession.connect(
       { host: request.targetIp, port: request.sshPort, username: request.username },
       { method: "password", password: request.password },
       deps.connectTimeoutMs
     );
-
-    emitStage("deploying_key", "Installing collector's public key into authorized_keys");
-    await deployAuthorizedKey(session, keyPair.publicKey);
 
     const remoteHostname = await detectRemoteHostname(session);
 
